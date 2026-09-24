@@ -25,6 +25,7 @@ private struct WidgetTheme {
     let infoText: Color
     let infoBackground: Color
     let infoBorder: Color
+    let appearanceIcon: Color
     let todayFill: Color
     let restFill: Color
     let outsideMonthOpacity: Double
@@ -48,6 +49,7 @@ private struct WidgetTheme {
         infoText: Color.blue.opacity(0.84),
         infoBackground: Color.blue.opacity(0.06),
         infoBorder: Color.blue.opacity(0.20),
+        appearanceIcon: Color(red: 0.38, green: 0.42, blue: 0.86),
         todayFill: Color(red: 0.29, green: 0.43, blue: 0.88).opacity(0.10),
         restFill: Color.red.opacity(0.06),
         outsideMonthOpacity: 0.28
@@ -72,6 +74,7 @@ private struct WidgetTheme {
         infoText: Color(red: 0.52, green: 0.70, blue: 1.00),
         infoBackground: Color(red: 0.35, green: 0.55, blue: 1.00).opacity(0.18),
         infoBorder: Color(red: 0.52, green: 0.70, blue: 1.00).opacity(0.30),
+        appearanceIcon: Color(red: 1.00, green: 0.78, blue: 0.30),
         todayFill: Color(red: 0.49, green: 0.62, blue: 1.00).opacity(0.20),
         restFill: Color(red: 1.00, green: 0.35, blue: 0.33).opacity(0.14),
         outsideMonthOpacity: 0.35
@@ -93,6 +96,7 @@ private enum CalendarWidgetState {
     private static let selectedDateKey = "selectedDate"
     private static let anchorDayKey = "stateAnchorDay"
     private static let legacySelectedMonthKey = "selectedCalendarMonth"
+    private static let appearanceKey = "appearanceOverride"
 
     struct Snapshot {
         let displayedMonth: WidgetDateKey
@@ -139,6 +143,25 @@ private enum CalendarWidgetState {
             defaults.removeObject(forKey: key)
         }
         performanceLog.debug("intent: today")
+    }
+
+    /// 手动选择的外观，nil 表示跟随系统；不随日期重置。
+    static var appearance: ColorScheme? {
+        switch UserDefaults.standard.string(forKey: appearanceKey) {
+        case "dark": return .dark
+        case "light": return .light
+        default: return nil
+        }
+    }
+
+    static func setAppearance(dark: Bool, systemDark: Bool) {
+        let defaults = UserDefaults.standard
+        if dark == systemDark {
+            defaults.removeObject(forKey: appearanceKey)
+        } else {
+            defaults.set(dark ? "dark" : "light", forKey: appearanceKey)
+        }
+        performanceLog.debug("intent: appearance dark=\(dark) system=\(systemDark)")
     }
 
     private static func save(displayedMonth: WidgetDateKey, selectedDate: WidgetDateKey, today: WidgetDateKey) {
@@ -203,6 +226,31 @@ struct SelectDateIntent: AppIntent {
         if let key = WidgetDateKey(number: date) {
             CalendarWidgetState.select(key)
         }
+        return .result()
+    }
+}
+
+struct ToggleAppearanceIntent: AppIntent {
+    static let title: LocalizedStringResource = "切换浅色或深色"
+    static let description = IntentDescription("在浅色与深色之间切换桌面日历，切回与系统一致时恢复跟随系统")
+    static let openAppWhenRun = false
+    static let isDiscoverable = false
+
+    @Parameter(title: "深色")
+    var dark: Bool
+
+    @Parameter(title: "系统为深色")
+    var systemDark: Bool
+
+    init() {}
+
+    init(dark: Bool, systemDark: Bool) {
+        self.dark = dark
+        self.systemDark = systemDark
+    }
+
+    func perform() async throws -> some IntentResult {
+        CalendarWidgetState.setAppearance(dark: dark, systemDark: systemDark)
         return .result()
     }
 }
@@ -394,6 +442,7 @@ private struct CalendarWidgetEntry: TimelineEntry {
     let selectedDate: WidgetDateKey
     let days: [WidgetDateKey: CalendarDay]
     let countdown: String
+    let appearance: ColorScheme?
 }
 
 private struct CalendarWidgetProvider: TimelineProvider {
@@ -451,7 +500,8 @@ private struct CalendarWidgetProvider: TimelineProvider {
             displayedMonth: state.displayedMonth,
             selectedDate: state.selectedDate,
             days: days,
-            countdown: model.countdown(today: today, days: days)
+            countdown: model.countdown(today: today, days: days),
+            appearance: CalendarWidgetState.appearance
         )
     }
 }
@@ -464,12 +514,18 @@ private struct CalendarWidgetView: View {
     private let model = WidgetCalendarModel.shared
     private let weekdayNames = ["一", "二", "三", "四", "五", "六", "日"]
 
+    /// 系统会按浅色、深色各渲染一份，手动选择外观时两份都使用同一套配色。
+    private var effectiveScheme: ColorScheme {
+        entry.appearance ?? colorScheme
+    }
+
     private var theme: WidgetTheme {
-        .resolve(colorScheme)
+        .resolve(effectiveScheme)
     }
 
     var body: some View {
         content
+        .environment(\.colorScheme, effectiveScheme)
         .containerBackground(for: .widget) {
             theme.background
         }
@@ -511,9 +567,12 @@ private struct CalendarWidgetView: View {
         )
         .overlay(alignment: .bottomTrailing) {
             if family == .systemMedium {
-                webLink(compact: true)
-                    .padding(.trailing, 12)
-                    .padding(.bottom, 8)
+                HStack(spacing: 4) {
+                    appearanceToggle(compact: true)
+                    webLink(compact: true)
+                }
+                .padding(.trailing, 12)
+                .padding(.bottom, 8)
             }
         }
     }
@@ -582,6 +641,7 @@ private struct CalendarWidgetView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.65)
                 Spacer(minLength: 0)
+                appearanceToggle(compact: true)
                 webLink(compact: true)
             }
             .foregroundStyle(theme.ink.opacity(0.72))
@@ -799,6 +859,24 @@ private struct CalendarWidgetView: View {
                 cell
             }
         }
+    }
+
+    private func appearanceToggle(compact: Bool) -> some View {
+        let isDark = effectiveScheme == .dark
+        return Button(intent: ToggleAppearanceIntent(dark: !isDark, systemDark: colorScheme == .dark)) {
+            Image(systemName: isDark ? "sun.max.fill" : "moon.fill")
+                .font(.system(size: compact ? 8 : 10, weight: .semibold))
+                .foregroundStyle(theme.appearanceIcon)
+                .frame(width: compact ? 18 : 22, height: compact ? 16 : 20)
+                .background(theme.controlBackground)
+                .clipShape(RoundedRectangle(cornerRadius: compact ? 4 : 5, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: compact ? 4 : 5, style: .continuous)
+                        .stroke(theme.infoBorder, lineWidth: 0.7)
+                )
+        }
+        .buttonStyle(.plain)
+        .help(isDark ? "切换为浅色" : "切换为深色")
     }
 
     private func webLink(compact: Bool) -> some View {

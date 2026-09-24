@@ -6,7 +6,7 @@
   <img src="docs/desktop.jpg" alt="桌面整体效果" width="640">
 </p>
 
-小组件跟随系统外观，在浅色与深色之间自动切换：
+小组件默认跟随系统外观，也可以点右下角的太阳/月亮按钮手动切换：
 
 <table align="center">
   <tr>
@@ -29,7 +29,8 @@
 - 底部“网页”按钮可打开百度日历
 - 作为系统桌面小组件运行，支持 Mission Control、空间切换和系统桌面布局
 - 提供中号、大号两种尺寸（底部详情仅大号显示）
-- 支持浅色与深色两套配色，跟随系统外观自动切换（包括“自动”外观随时间切换）
+- 支持浅色与深色两套配色，默认跟随系统外观自动切换（包括“自动”外观随时间切换）
+- 右下角的太阳/月亮按钮可手动切换浅色或深色；切回与系统一致的外观时自动恢复跟随系统
 
 ## 下载安装
 
@@ -112,6 +113,7 @@ open ~/Applications/DesktopCalendar.app
 | `Sources/WidgetHostMain.swift` | 无界面的宿主 App，负责承载扩展、在启动时刷新小组件，并在首次打开时给出安装提示 |
 | `Resources/` | Info.plist 与 entitlements（扩展需要网络权限） |
 | `scripts/package-release.sh` | 构建通用架构版本并打包成用于发布的 DMG |
+| `scripts/render-app-icon.swift` | 用代码绘制应用图标，生成 `Resources/Assets.xcassets` 中的各尺寸图片 |
 
 ## 常见问题
 
