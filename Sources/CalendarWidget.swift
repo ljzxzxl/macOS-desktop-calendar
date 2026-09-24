@@ -255,8 +255,20 @@ struct ToggleAppearanceIntent: AppIntent {
     }
 }
 
+/// 下一个法定假期；dayIndex 不为 nil 表示今天正处于该假期中的第几天。
+private struct HolidayInfo {
+    let name: String
+    let year: Int
+    let daysUntil: Int
+    let length: Int
+    let dayIndex: Int?
+}
+
 private struct DayDetail {
     let dateTitle: String
+    /// 例如“9月 · 周四 · 今天”，用于中号左侧详情。
+    let shortTitle: String
+    let hasFestival: Bool
     let festivals: String
     let lunarTitle: String
     let ganzhi: String
@@ -330,11 +342,14 @@ private struct WidgetCalendarModel {
         default: relative = "\(-offset)天前"
         }
         let dateTitle = "\(key.month)月\(key.day)日 \(weekdayName(for: key)) · \(relative)"
+        let shortTitle = "\(key.month)月 · \(shortWeekdayName(for: key)) · \(relative)"
 
         guard let day, !day.lunarDay.isEmpty else {
             let lunar = lunarComponents(for: key)
             return DayDetail(
                 dateTitle: dateTitle,
+                shortTitle: shortTitle,
+                hasFestival: false,
                 festivals: "暂无节日",
                 lunarTitle: "\(lunarMonthName(lunar.month, isLeap: lunar.isLeap))\(lunarDayName(lunar.day))",
                 ganzhi: fallbackYearTitle(for: key),
@@ -349,6 +364,8 @@ private struct WidgetCalendarModel {
         }
         return DayDetail(
             dateTitle: dateTitle,
+            shortTitle: shortTitle,
+            hasFestival: !festivals.isEmpty,
             festivals: festivals.isEmpty ? "暂无节日" : festivals.prefix(3).joined(separator: " · "),
             lunarTitle: "\(day.lunarMonthTitle)\(day.lunarDay)",
             ganzhi: "\(day.ganzhiYear)\(day.animal)年 \(day.ganzhiMonth)月 \(day.ganzhiDay)日",
@@ -358,11 +375,21 @@ private struct WidgetCalendarModel {
     }
 
     func countdown(today: WidgetDateKey, days: [WidgetDateKey: CalendarDay]) -> String {
+        guard let info = holidayInfo(today: today, days: days) else {
+            return "后续假期安排待官方公布"
+        }
+        if info.dayIndex != nil {
+            return "今天是\(info.name)假期 · 共放假\(info.length)天"
+        }
+        return "距离 \(info.year)年\(info.name) 还有\(info.daysUntil)天 · 放假\(info.length)天"
+    }
+
+    func holidayInfo(today: WidgetDateKey, days: [WidgetDateKey: CalendarDay]) -> HolidayInfo? {
         guard let first = days.values
             .filter({ $0.key >= today && $0.status == .rest })
             .min(by: { $0.key < $1.key })
         else {
-            return "后续假期安排待官方公布"
+            return nil
         }
 
         var block = [first]
@@ -377,11 +404,14 @@ private struct WidgetCalendarModel {
             cursor = next.key
         }
 
-        let name = holidayName(in: block)
-        if first.key == today {
-            return "今天是\(name)假期 · 共放假\(block.count)天"
-        }
-        return "距离 \(first.key.year)年\(name) 还有\(distance(from: today, to: first.key))天 · 放假\(block.count)天"
+        let start = block[0].key
+        return HolidayInfo(
+            name: holidayName(in: block),
+            year: start.year,
+            daysUntil: max(0, distance(from: today, to: start)),
+            length: block.count,
+            dayIndex: first.key == today ? distance(from: start, to: today) + 1 : nil
+        )
     }
 
     private func holidayName(in block: [CalendarDay]) -> String {
@@ -393,6 +423,10 @@ private struct WidgetCalendarModel {
             }
         }
         return "法定节假日"
+    }
+
+    func shortWeekdayName(for key: WidgetDateKey) -> String {
+        "周" + weekdayName(for: key).suffix(1)
     }
 
     private func weekdayName(for key: WidgetDateKey) -> String {
@@ -442,6 +476,7 @@ private struct CalendarWidgetEntry: TimelineEntry {
     let selectedDate: WidgetDateKey
     let days: [WidgetDateKey: CalendarDay]
     let countdown: String
+    let holiday: HolidayInfo?
     let appearance: ColorScheme?
 }
 
@@ -501,6 +536,7 @@ private struct CalendarWidgetProvider: TimelineProvider {
             selectedDate: state.selectedDate,
             days: days,
             countdown: model.countdown(today: today, days: days),
+            holiday: model.holidayInfo(today: today, days: days),
             appearance: CalendarWidgetState.appearance
         )
     }
@@ -525,59 +561,58 @@ private struct CalendarWidgetView: View {
 
     var body: some View {
         content
-        .environment(\.colorScheme, effectiveScheme)
-        .containerBackground(for: .widget) {
-            theme.background
-        }
+            .environment(\.colorScheme, effectiveScheme)
+            .widgetURL(CalendarWidgetConstants.calendarURL)
+            .containerBackground(for: .widget) {
+                theme.background
+            }
     }
 
     @ViewBuilder
     private var content: some View {
-        let month = entry.displayedMonth
-        let compact = family == .systemLarge
-
-        VStack(spacing: 0) {
-            header(year: month.year, month: month.month, compact: compact)
-            weekdayHeader(compact: compact)
-                .padding(.horizontal, compact ? 4 : 12)
-                .padding(.top, compact ? 2 : 8)
-            calendarGrid(
-                days: model.visibleDays(for: month),
-                month: month,
-                compact: compact
-            )
-                .padding(.horizontal, compact ? 4 : 10)
-                .padding(.top, compact ? 2 : 4)
-
-            if family == .systemLarge {
-                compactDetails
-                    .padding(.horizontal, 4)
-                    .padding(.top, 4)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .padding(.horizontal, compact ? 6 : 10)
-        .padding(.top, compact ? 12 : 16)
-        .padding(.bottom, compact ? 0 : 4)
-        .background(theme.background)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(theme.border, lineWidth: 1)
-        )
-        .overlay(alignment: .bottomTrailing) {
-            if family == .systemMedium {
-                HStack(spacing: 4) {
-                    appearanceToggle(compact: true)
-                    webLink(compact: true)
-                }
-                .padding(.trailing, 12)
-                .padding(.bottom, 8)
-            }
+        switch family {
+        case .systemSmall:
+            framed(smallContent)
+        case .systemMedium:
+            framed(mediumContent)
+        default:
+            framed(largeContent)
         }
     }
 
-    private var compactDetails: some View {
+    private func framed<Content: View>(_ content: Content) -> some View {
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .background(theme.background)
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(theme.border, lineWidth: 1)
+            )
+    }
+
+    // MARK: - 大号
+
+    private var largeContent: some View {
+        let month = entry.displayedMonth
+        return VStack(spacing: 0) {
+            header(year: month.year, month: month.month)
+            weekdayHeader(fontSize: 9)
+                .frame(height: 12)
+                .padding(.horizontal, 4)
+                .padding(.top, 2)
+            calendarGrid(days: model.visibleDays(for: month), month: month)
+                .padding(.horizontal, 4)
+                .padding(.top, 2)
+            largeDetails
+                .padding(.horizontal, 4)
+                .padding(.top, 4)
+        }
+        .padding(.horizontal, 6)
+        .padding(.top, 12)
+    }
+
+    private var largeDetails: some View {
         let detail = model.detail(
             for: entry.selectedDate,
             day: entry.days[entry.selectedDate],
@@ -641,8 +676,8 @@ private struct CalendarWidgetView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.65)
                 Spacer(minLength: 0)
-                appearanceToggle(compact: true)
-                webLink(compact: true)
+                appearanceToggle
+                webLink
             }
             .foregroundStyle(theme.ink.opacity(0.72))
             .frame(height: 18)
@@ -652,6 +687,329 @@ private struct CalendarWidgetView: View {
         .frame(height: 80)
         .background(theme.panelBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func header(year: Int, month: Int) -> some View {
+        HStack(spacing: 3) {
+            headerTag("假期")
+            Spacer(minLength: 1)
+            monthNavigator(year: year, month: month)
+            Spacer(minLength: 1)
+            todayButton
+        }
+        .padding(.horizontal, 2)
+        .padding(.vertical, 3)
+        .background(theme.headerBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(theme.headerBorder, lineWidth: 0.75)
+        )
+    }
+
+    private func headerTag(_ title: String) -> some View {
+        Text(verbatim: title)
+            .font(.system(size: 9, weight: .medium))
+            .foregroundStyle(theme.tagText)
+            .padding(.horizontal, 5)
+            .frame(height: 20)
+            .background(theme.tagBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+    }
+
+    private func calendarGrid(days: [WidgetDateKey], month: WidgetDateKey) -> some View {
+        VStack(spacing: 1) {
+            ForEach(0..<days.count / 7, id: \.self) { row in
+                HStack(spacing: 1) {
+                    ForEach(days[(row * 7)..<(row * 7 + 7)], id: \.self) { key in
+                        dayCell(key: key, month: month)
+                    }
+                }
+            }
+        }
+    }
+
+    private func dayCell(key: WidgetDateKey, month: WidgetDateKey) -> some View {
+        let theme = self.theme
+        let day = entry.days[key]
+        let status = day?.status
+        let inCurrentMonth = key.year == month.year && key.month == month.month
+        let isToday = key == entry.today
+        let isSelected = key == entry.selectedDate
+        let isRedDay = status == .rest || (status != .work && model.isWeekend(key))
+        let numberColor = isToday ? theme.accent : (isRedDay ? theme.holiday : theme.ink)
+        let fadedOpacity = inCurrentMonth ? 1.0 : theme.outsideMonthOpacity
+        let label = model.dayLabel(for: key, day: day)
+        let fill: Color? = isToday
+            ? theme.todayFill
+            : (status == .rest ? theme.restFill : nil)
+
+        let cell = VStack(spacing: 1) {
+            Text("\(key.day)")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(numberColor.opacity(fadedOpacity))
+                .frame(maxWidth: .infinity)
+            Text(label)
+                .font(.system(size: 8, weight: .regular))
+                .lineLimit(1)
+                .minimumScaleFactor(label.count > 4 ? 0.65 : 1)
+                .foregroundStyle(
+                    (status == .rest || isToday ? numberColor : theme.mutedInk)
+                        .opacity(fadedOpacity)
+                )
+                .frame(maxWidth: .infinity)
+        }
+        .frame(height: 30)
+        .padding(.vertical, 1)
+        .background {
+            if let fill {
+                RoundedRectangle(cornerRadius: 6, style: .continuous).fill(fill)
+            }
+        }
+        .overlay {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(theme.selection, lineWidth: 1.5)
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if let status {
+                Text(status == .rest ? "休" : "班")
+                    .font(.system(size: 6, weight: .medium))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 2)
+                    .padding(.vertical, 1)
+                    .background(status == .rest ? theme.holiday : theme.workBadge)
+                    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                    .opacity(inCurrentMonth ? 1 : 0.5)
+                    .offset(x: 2, y: -2)
+            }
+        }
+        .contentShape(Rectangle())
+
+        return selectable(cell, key: key, enabled: inCurrentMonth)
+    }
+
+    // MARK: - 中号
+
+    private var mediumContent: some View {
+        let month = entry.displayedMonth
+        return HStack(spacing: 10) {
+            mediumDetailPanel
+                .frame(width: 108)
+            VStack(spacing: 0) {
+                HStack(spacing: 3) {
+                    monthNavigator(year: month.year, month: month.month)
+                    Spacer(minLength: 2)
+                    todayButton
+                }
+                .frame(height: 20)
+                weekdayHeader(fontSize: 8)
+                    .frame(height: 11)
+                    .padding(.top, 3)
+                miniGrid(days: model.visibleDays(for: month), month: month)
+                    .padding(.top, 2)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+
+    private var mediumDetailPanel: some View {
+        let key = entry.selectedDate
+        let day = entry.days[key]
+        let detail = model.detail(for: key, day: day, today: entry.today)
+        let status = day?.status
+        let isRedDay = status == .rest || (status != .work && model.isWeekend(key))
+        let suit = detail.suit.split(separator: "·").prefix(3).joined(separator: "·")
+        let summary = holidaySummary
+        return VStack(alignment: .leading, spacing: 0) {
+            Text(detail.shortTitle)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(theme.holiday)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text("\(key.day)")
+                    .font(.system(size: 32, weight: .semibold))
+                    .foregroundStyle(isRedDay ? theme.holiday : theme.ink)
+                if let status {
+                    statusBadge(status, size: 9)
+                }
+            }
+            .frame(height: 38)
+            Text(detail.lunarTitle)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(theme.ink)
+                .lineLimit(1)
+            Text(detail.hasFestival ? detail.festivals : detail.ganzhi)
+                .font(.system(size: 8, weight: detail.hasFestival ? .medium : .regular))
+                .foregroundStyle(detail.hasFestival ? theme.holiday : theme.mutedInk)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .padding(.top, 1)
+            Spacer(minLength: 3)
+            almanacLine(tag: "宜", text: suit, color: theme.holiday)
+            Spacer(minLength: 3)
+            Text("\(summary.title) · \(summary.subtitle)")
+                .font(.system(size: 8, weight: .medium))
+                .foregroundStyle(theme.ink.opacity(0.72))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            HStack(spacing: 4) {
+                appearanceToggle
+                webLink
+            }
+            .padding(.top, 4)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func miniGrid(days: [WidgetDateKey], month: WidgetDateKey) -> some View {
+        VStack(spacing: 1) {
+            ForEach(0..<days.count / 7, id: \.self) { row in
+                HStack(spacing: 1) {
+                    ForEach(days[(row * 7)..<(row * 7 + 7)], id: \.self) { key in
+                        miniDayCell(key: key, month: month)
+                    }
+                }
+                .frame(maxHeight: .infinity)
+            }
+        }
+    }
+
+    private func miniDayCell(key: WidgetDateKey, month: WidgetDateKey) -> some View {
+        let theme = self.theme
+        let status = entry.days[key]?.status
+        let inCurrentMonth = key.year == month.year && key.month == month.month
+        let isToday = key == entry.today
+        let isSelected = key == entry.selectedDate
+        let isRedDay = status == .rest || (status != .work && model.isWeekend(key))
+        let fadedOpacity = inCurrentMonth ? 1.0 : theme.outsideMonthOpacity
+        let numberColor: Color = isToday ? .white : (isRedDay ? theme.holiday : theme.ink)
+        let fill: Color? = isToday
+            ? theme.accent
+            : (status == .rest ? theme.holiday.opacity(0.16) : (status == .work ? theme.workBadge.opacity(0.20) : nil))
+
+        let cell = Text("\(key.day)")
+            .font(.system(size: 10, weight: isToday ? .bold : .medium))
+            .foregroundStyle(numberColor.opacity(fadedOpacity))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background {
+                if let fill {
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(fill)
+                        .opacity(inCurrentMonth ? 1 : 0.6)
+                }
+            }
+            .overlay {
+                if isSelected && !isToday {
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .stroke(theme.selection, lineWidth: 1.2)
+                }
+            }
+            .contentShape(Rectangle())
+
+        return selectable(cell, key: key, enabled: inCurrentMonth)
+    }
+
+    // MARK: - 小号
+
+    private var smallContent: some View {
+        let key = entry.today
+        let day = entry.days[key]
+        let detail = model.detail(for: key, day: day, today: key)
+        let status = day?.status
+        let isRedDay = status == .rest || (status != .work && model.isWeekend(key))
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("\(key.month)月")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(theme.holiday)
+                Spacer(minLength: 4)
+                Text(model.shortWeekdayName(for: key))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(theme.mutedInk)
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Text("\(key.day)")
+                    .font(.system(size: 44, weight: .semibold))
+                    .foregroundStyle(isRedDay ? theme.holiday : theme.ink)
+                if let status {
+                    statusBadge(status, size: 10)
+                }
+            }
+            .frame(height: 50)
+            Text(detail.hasFestival ? "\(detail.lunarTitle) · \(detail.festivals)" : detail.lunarTitle)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(theme.ink.opacity(0.85))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Spacer(minLength: 6)
+            Rectangle()
+                .fill(theme.border)
+                .frame(height: 0.5)
+            smallFooter(status: status)
+                .padding(.top, 7)
+        }
+        .padding(14)
+    }
+
+    private func smallFooter(status: HolidayStatus?) -> some View {
+        let summary = holidaySummary
+        let isWorkDay = status == .work && summary.isOngoing == false
+        let title = isWorkDay ? "今天补班" : summary.title
+        let subtitle = isWorkDay ? summary.title : summary.subtitle
+        return HStack(spacing: 6) {
+            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                .fill(isWorkDay ? theme.workBadge : theme.holiday)
+                .frame(width: 3, height: 26)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(theme.ink)
+                Text(subtitle)
+                    .font(.system(size: 9))
+                    .foregroundStyle(theme.mutedInk)
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+        }
+    }
+
+    // MARK: - 共用组件
+
+    private var holidaySummary: (title: String, subtitle: String, isOngoing: Bool) {
+        guard let info = entry.holiday else {
+            return ("后续假期", "待官方公布", false)
+        }
+        if let index = info.dayIndex {
+            return ("\(info.name)假期", "第\(index)天 · 共\(info.length)天", true)
+        }
+        return ("\(info.name) 还有\(info.daysUntil)天", "放假\(info.length)天", false)
+    }
+
+    private func statusBadge(_ status: HolidayStatus, size: CGFloat) -> some View {
+        Text(status == .rest ? "休" : "班")
+            .font(.system(size: size, weight: .medium))
+            .foregroundStyle(.white)
+            .padding(.horizontal, size * 0.35)
+            .padding(.vertical, size * 0.15)
+            .background(
+                status == .rest ? theme.holiday : theme.workBadge,
+                in: RoundedRectangle(cornerRadius: 3, style: .continuous)
+            )
+    }
+
+    /// 每个按钮都会显著增加点击后的渲染时间，淡灰色的上下月日期不做成按钮。
+    @ViewBuilder
+    private func selectable<Cell: View>(_ cell: Cell, key: WidgetDateKey, enabled: Bool) -> some View {
+        if enabled {
+            Button(intent: SelectDateIntent(date: key)) { cell }
+                .buttonStyle(.plain)
+        } else {
+            cell
+        }
     }
 
     private func almanacLine(tag: String, text: String, color: Color) -> some View {
@@ -670,75 +1028,30 @@ private struct CalendarWidgetView: View {
         }
     }
 
-    private func header(year: Int, month: Int, compact: Bool) -> some View {
-        HStack(spacing: compact ? 3 : 6) {
-            headerTag("假期", compact: compact)
-
-            Spacer(minLength: compact ? 1 : 4)
-
-            headerArrow(
-                "chevron.left",
-                help: "上一个月",
-                intent: PreviousMonthIntent(),
-                compact: compact
-            )
-            headerTitle(year: year, month: month, compact: compact)
-            headerArrow(
-                "chevron.right",
-                help: "下一个月",
-                intent: NextMonthIntent(),
-                compact: compact
-            )
-
-            Spacer(minLength: compact ? 1 : 4)
-
-            headerAction(compact: compact)
+    private func monthNavigator(year: Int, month: Int) -> some View {
+        HStack(spacing: 3) {
+            headerArrow("chevron.left", help: "上一个月", intent: PreviousMonthIntent())
+            Text(verbatim: "\(year)年 \(month)月")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(theme.ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(minWidth: 74)
+                .frame(height: 20)
+            headerArrow("chevron.right", help: "下一个月", intent: NextMonthIntent())
         }
-        .padding(.horizontal, compact ? 2 : 4)
-        .padding(.vertical, compact ? 3 : 7)
-        .background(theme.headerBackground)
-        .clipShape(RoundedRectangle(cornerRadius: compact ? 8 : 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: compact ? 8 : 12, style: .continuous)
-                .stroke(theme.headerBorder, lineWidth: 0.75)
-        )
     }
 
-    private func headerTag(_ title: String, compact: Bool) -> some View {
-        Text(verbatim: title)
-            .font(.system(size: compact ? 9 : 12, weight: .medium))
-            .foregroundStyle(theme.tagText)
-            .padding(.horizontal, compact ? 5 : 8)
-            .frame(height: compact ? 20 : 30)
-            .background(theme.tagBackground)
-            .clipShape(RoundedRectangle(cornerRadius: compact ? 5 : 7, style: .continuous))
-    }
-
-    private func headerTitle(year: Int, month: Int, compact: Bool) -> some View {
-        Text(verbatim: "\(year)年 \(month)月")
-            .font(.system(size: compact ? 11 : 14, weight: .semibold))
-            .foregroundStyle(theme.ink)
-            .lineLimit(1)
-            .minimumScaleFactor(0.8)
-            .frame(minWidth: compact ? 74 : 96)
-        .frame(height: compact ? 20 : 30)
-    }
-
-    private func headerArrow<Intent: AppIntent>(
-        _ systemName: String,
-        help: String,
-        intent: Intent,
-        compact: Bool
-    ) -> some View {
+    private func headerArrow<Intent: AppIntent>(_ systemName: String, help: String, intent: Intent) -> some View {
         Button(intent: intent) {
             Image(systemName: systemName)
-                .font(.system(size: compact ? 8 : 10, weight: .semibold))
+                .font(.system(size: 8, weight: .semibold))
                 .foregroundStyle(theme.mutedInk)
-                .frame(width: compact ? 20 : 26, height: compact ? 20 : 30)
+                .frame(width: 20, height: 20)
                 .background(theme.controlBackground)
-                .clipShape(RoundedRectangle(cornerRadius: compact ? 5 : 7, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: compact ? 5 : 7, style: .continuous)
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
                         .stroke(theme.controlBorder, lineWidth: 0.7)
                 )
         }
@@ -746,17 +1059,17 @@ private struct CalendarWidgetView: View {
         .help(help)
     }
 
-    private func headerAction(compact: Bool) -> some View {
+    private var todayButton: some View {
         Button(intent: TodayIntent()) {
             Text("今天")
-                .font(.system(size: compact ? 10 : 13, weight: .medium))
+                .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(theme.ink)
-                .padding(.horizontal, compact ? 6 : 9)
-                .frame(height: compact ? 20 : 30)
+                .padding(.horizontal, 6)
+                .frame(height: 20)
                 .background(theme.controlBackground)
-                .clipShape(RoundedRectangle(cornerRadius: compact ? 5 : 7, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: compact ? 5 : 7, style: .continuous)
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
                         .stroke(theme.controlBorder, lineWidth: 0.7)
                 )
         }
@@ -764,114 +1077,28 @@ private struct CalendarWidgetView: View {
         .help("回到当前月份")
     }
 
-    private func weekdayHeader(compact: Bool) -> some View {
+    private func weekdayHeader(fontSize: CGFloat) -> some View {
         HStack(spacing: 0) {
             ForEach(Array(weekdayNames.enumerated()), id: \.offset) { index, weekday in
                 Text(weekday)
-                    .font(.system(size: compact ? 9 : 12, weight: .medium))
+                    .font(.system(size: fontSize, weight: .medium))
                     .foregroundStyle(index >= 5 ? theme.holiday : theme.mutedInk)
                     .frame(maxWidth: .infinity)
             }
         }
-        .frame(height: compact ? 12 : nil)
     }
 
-    private func calendarGrid(
-        days: [WidgetDateKey],
-        month: WidgetDateKey,
-        compact: Bool
-    ) -> some View {
-        VStack(spacing: compact ? 1 : 5) {
-            ForEach(0..<days.count / 7, id: \.self) { row in
-                HStack(spacing: compact ? 1 : 2) {
-                    ForEach(days[(row * 7)..<(row * 7 + 7)], id: \.self) { key in
-                        dayCell(key: key, month: month, compact: compact)
-                    }
-                }
-            }
-        }
-    }
-
-    private func dayCell(key: WidgetDateKey, month: WidgetDateKey, compact: Bool) -> some View {
-        let theme = self.theme
-        let day = entry.days[key]
-        let status = day?.status
-        let inCurrentMonth = key.year == month.year && key.month == month.month
-        let isToday = key == entry.today
-        let isSelected = key == entry.selectedDate
-        let isRedDay = status == .rest || (status != .work && model.isWeekend(key))
-        let numberColor = isToday ? theme.accent : (isRedDay ? theme.holiday : theme.ink)
-        let fadedOpacity = inCurrentMonth ? 1.0 : theme.outsideMonthOpacity
-        let label = model.dayLabel(for: key, day: day)
-        let fill: Color? = isToday
-            ? theme.todayFill
-            : (status == .rest ? theme.restFill : nil)
-
-        let cell = VStack(spacing: 1) {
-            Text("\(key.day)")
-                .font(.system(size: compact ? 13 : 17, weight: .medium))
-                .foregroundStyle(numberColor.opacity(fadedOpacity))
-                .frame(maxWidth: .infinity)
-            Text(label)
-                .font(.system(size: compact ? 8 : 10, weight: .regular))
-                .lineLimit(1)
-                .minimumScaleFactor(label.count > 4 ? 0.65 : 1)
-                .foregroundStyle(
-                    (status == .rest || isToday ? numberColor : theme.mutedInk)
-                        .opacity(fadedOpacity)
-                )
-                .frame(maxWidth: .infinity)
-        }
-        .frame(height: compact ? 30 : nil)
-        .padding(.vertical, compact ? 1 : 4)
-        .background {
-            if let fill {
-                RoundedRectangle(cornerRadius: 6, style: .continuous).fill(fill)
-            }
-        }
-        .overlay {
-            if isSelected {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(theme.selection, lineWidth: 1.5)
-            }
-        }
-        .overlay(alignment: .topTrailing) {
-            if let status {
-                Text(status == .rest ? "休" : "班")
-                    .font(.system(size: compact ? 6 : 7, weight: .medium))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, compact ? 2 : 3)
-                    .padding(.vertical, compact ? 1 : 2)
-                    .background(status == .rest ? theme.holiday : theme.workBadge)
-                    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-                    .opacity(inCurrentMonth ? 1 : 0.5)
-                    .offset(x: 2, y: -2)
-            }
-        }
-        .contentShape(Rectangle())
-
-        // 每个按钮都会显著增加点击后的渲染时间，淡灰色的上下月日期不做成按钮。
-        return Group {
-            if inCurrentMonth {
-                Button(intent: SelectDateIntent(date: key)) { cell }
-                    .buttonStyle(.plain)
-            } else {
-                cell
-            }
-        }
-    }
-
-    private func appearanceToggle(compact: Bool) -> some View {
+    private var appearanceToggle: some View {
         let isDark = effectiveScheme == .dark
         return Button(intent: ToggleAppearanceIntent(dark: !isDark, systemDark: colorScheme == .dark)) {
             Image(systemName: isDark ? "sun.max.fill" : "moon.fill")
-                .font(.system(size: compact ? 8 : 10, weight: .semibold))
+                .font(.system(size: 8, weight: .semibold))
                 .foregroundStyle(theme.appearanceIcon)
-                .frame(width: compact ? 18 : 22, height: compact ? 16 : 20)
+                .frame(width: 18, height: 16)
                 .background(theme.controlBackground)
-                .clipShape(RoundedRectangle(cornerRadius: compact ? 4 : 5, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: compact ? 4 : 5, style: .continuous)
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
                         .stroke(theme.infoBorder, lineWidth: 0.7)
                 )
         }
@@ -879,20 +1106,20 @@ private struct CalendarWidgetView: View {
         .help(isDark ? "切换为浅色" : "切换为深色")
     }
 
-    private func webLink(compact: Bool) -> some View {
+    private var webLink: some View {
         Link(destination: CalendarWidgetConstants.calendarURL) {
-            HStack(spacing: compact ? 2 : 3) {
+            HStack(spacing: 2) {
                 Text("网页")
                 Image(systemName: "arrow.up.right.square")
             }
-            .font(.system(size: compact ? 8 : 10, weight: .medium))
+            .font(.system(size: 8, weight: .medium))
             .foregroundStyle(theme.infoText)
-            .padding(.horizontal, compact ? 5 : 7)
-            .frame(height: compact ? 16 : 20)
+            .padding(.horizontal, 5)
+            .frame(height: 16)
             .background(theme.controlBackground)
-            .clipShape(RoundedRectangle(cornerRadius: compact ? 4 : 5, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: compact ? 4 : 5, style: .continuous)
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
                     .stroke(theme.infoBorder, lineWidth: 0.7)
             )
         }
@@ -910,7 +1137,7 @@ struct DesktopCalendarWidget: Widget {
         }
         .configurationDisplayName("桌面日历")
         .description("与百度日历同步的法定节假日与调休安排，点击日期可查看当日农历与宜忌。")
-        .supportedFamilies([.systemMedium, .systemLarge])
+        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
         .contentMarginsDisabled()
         .containerBackgroundRemovable(false)
     }
