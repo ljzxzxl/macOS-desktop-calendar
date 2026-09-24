@@ -31,13 +31,26 @@
 - 提供中号、大号两种尺寸（底部详情仅大号显示）
 - 支持浅色与深色两套配色，跟随系统外观自动切换（包括“自动”外观随时间切换）
 
-## 系统要求
+## 下载安装
 
-- macOS 14.0 及以上
-- Xcode 16 及以上
-- Apple Developer 账号（免费账号即可，用于开发签名）
+要求 macOS 14.0 及以上，同时支持 Apple 芯片和 Intel 芯片。
 
-## 构建与安装
+1. 在 [Releases](https://github.com/ljzxzxl/macOS-desktop-calendar/releases/latest) 页面下载最新的 `DesktopCalendar-x.y.z.dmg`。
+2. 打开 DMG，把 `DesktopCalendar.app` 拖到「应用程序」文件夹。**请务必先拖进去再打开**，直接在 DMG 或“下载”文件夹里运行会导致小组件显示为灰色占位。
+3. 本应用使用开发证书签名，未经过 Apple 公证，首次打开会被系统拦截。任选一种方式放行：
+   - 在终端执行下面的命令后，再双击打开：
+     ```bash
+     xattr -dr com.apple.quarantine /Applications/DesktopCalendar.app
+     ```
+   - 或者先双击打开一次，出现拦截提示后，到“系统设置 → 隐私与安全性”，在页面底部点“仍要打开”。
+4. 打开后会弹出“桌面日历已安装”的提示。本应用没有窗口，之后无需再打开。
+5. 在桌面空白处右键，选择“编辑小组件…”，搜索“桌面日历”，把中号或大号组件拖到桌面。
+
+更新时下载新版 DMG，覆盖「应用程序」里的旧版，重复第 3 步后打开一次即可。如果桌面上的组件没有变化，执行一次 `killall chronod`。
+
+## 从源码构建
+
+需要 Xcode 16 及以上，以及一个 Apple Developer 账号（免费账号即可，用于开发签名）。
 
 1. 用 Xcode 打开 `DesktopCalendar.xcodeproj`。
 2. 在 `DesktopCalendar` 和 `DesktopCalendarWidget` 两个 target 的 **Signing & Capabilities** 中选择你自己的 Team。如有冲突，把 Bundle Identifier 改成你自己的前缀。
@@ -59,6 +72,14 @@ xcodebuild -project DesktopCalendar.xcodeproj \
 > 如果 `xcode-select -p` 指向的是 CommandLineTools，请在命令前加上 `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`。
 
 > WidgetKit 扩展需要正规的开发签名才能被系统识别。`build-widget.sh` 使用 ad-hoc 签名，只适合快速检查能否编译，生成的小组件可能不会出现在小组件列表里。
+
+### 打包发布
+
+```bash
+DEVELOPMENT_TEAM=<你的 Team ID> scripts/package-release.sh
+```
+
+脚本会构建通用架构（arm64 + x86_64）的 Release 版本，校验签名后生成 `build/release/DesktopCalendar-<版本号>.dmg`，把它上传到 GitHub Releases 即可。
 
 ### 更新已安装的版本
 
@@ -88,10 +109,15 @@ open ~/Applications/DesktopCalendar.app
 | --- | --- |
 | `Sources/CalendarData.swift` | 百度日历数据的拉取、解析与本地缓存 |
 | `Sources/CalendarWidget.swift` | 小组件时间线、视图和交互（App Intents） |
-| `Sources/WidgetHostMain.swift` | 无界面的宿主 App，负责承载扩展并在启动时刷新小组件 |
+| `Sources/WidgetHostMain.swift` | 无界面的宿主 App，负责承载扩展、在启动时刷新小组件，并在首次打开时给出安装提示 |
 | `Resources/` | Info.plist 与 entitlements（扩展需要网络权限） |
+| `scripts/package-release.sh` | 构建通用架构版本并打包成用于发布的 DMG |
 
 ## 常见问题
+
+**打开时提示“无法验证开发者”或“已损坏，无法打开”**
+
+这是 macOS 对未公证应用的拦截，并不是文件真的损坏。按“下载安装”第 3 步执行 `xattr` 命令，或在“隐私与安全性”里点“仍要打开”即可。
 
 **小组件只显示灰色占位块**
 
