@@ -3,8 +3,21 @@
 一个原生 macOS WidgetKit 桌面小组件，把百度搜索里的“日历”卡片搬到桌面上：公历月视图、农历、二十四节气，以及与官方同步更新的法定节假日和调休安排。
 
 <p align="center">
-  <img src="docs/preview.jpg" alt="桌面日历效果图" width="380">
+  <img src="docs/desktop.jpg" alt="桌面整体效果" width="640">
 </p>
+
+小组件跟随系统外观，在浅色与深色之间自动切换：
+
+<table align="center">
+  <tr>
+    <th>浅色模式</th>
+    <th>深色模式</th>
+  </tr>
+  <tr>
+    <td><img src="docs/widget-light.jpg" alt="浅色模式" width="340"></td>
+    <td><img src="docs/widget-dark.jpg" alt="深色模式" width="340"></td>
+  </tr>
+</table>
 
 ## 功能
 
