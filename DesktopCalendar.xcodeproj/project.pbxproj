@@ -13,6 +13,7 @@
 		100000000000000000000004 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 200000000000000000000006 /* SwiftUI.framework */; };
 		100000000000000000000005 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 200000000000000000000007 /* WidgetKit.framework */; };
 		100000000000000000000006 /* DesktopCalendarWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 200000000000000000000009 /* DesktopCalendarWidget.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		100000000000000000000007 /* CalendarData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000012 /* CalendarData.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -51,6 +52,7 @@
 		200000000000000000000009 /* DesktopCalendarWidget.appex */ = {isa = PBXFileReference; explicitFileType = wrapper.app-extension; includeInIndex = 0; path = DesktopCalendarWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		200000000000000000000010 /* Host.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Host.entitlements; sourceTree = "<group>"; };
 		200000000000000000000011 /* Widget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Widget.entitlements; sourceTree = "<group>"; };
+		200000000000000000000012 /* CalendarData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarData.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -91,6 +93,7 @@
 			children = (
 				200000000000000000000001 /* WidgetHostMain.swift */,
 				200000000000000000000002 /* CalendarWidget.swift */,
+				200000000000000000000012 /* CalendarData.swift */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -225,6 +228,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				100000000000000000000003 /* CalendarWidget.swift in Sources */,
+				100000000000000000000007 /* CalendarData.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

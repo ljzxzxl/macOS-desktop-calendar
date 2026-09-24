@@ -2,34 +2,16 @@ import SwiftUI
 import WidgetKit
 import AppIntents
 import Foundation
+import os
 
-private struct WidgetDateKey: Hashable {
-    let year: Int
-    let month: Int
-    let day: Int
-
-    init(_ year: Int, _ month: Int, _ day: Int) {
-        self.year = year
-        self.month = month
-        self.day = day
-    }
-
-    init(_ date: Date, calendar: Calendar) {
-        let components = calendar.dateComponents([.year, .month, .day], from: date)
-        year = components.year ?? 0
-        month = components.month ?? 0
-        day = components.day ?? 0
-    }
-}
-
-private enum WidgetWorkMarker: Equatable {
-    case rest
-    case work
-}
+private let performanceLog = Logger(subsystem: "com.allen.desktopcalendar.widget", category: "performance")
 
 private enum WidgetPalette {
     static let ink = Color(red: 0.15, green: 0.17, blue: 0.20)
     static let mutedInk = Color(red: 0.40, green: 0.43, blue: 0.47)
+    static let accent = Color(red: 0.29, green: 0.43, blue: 0.88)
+    static let selection = Color(red: 0.32, green: 0.46, blue: 0.91)
+    static let holiday = Color.red.opacity(0.88)
 }
 
 private enum CalendarWidgetConstants {
@@ -37,51 +19,67 @@ private enum CalendarWidgetConstants {
     static let calendarURL = URL(string: "https://www.baidu.com/s?wd=%E6%97%A5%E5%8E%86")!
 }
 
-private enum CalendarWidgetNavigation {
-    private static let selectedMonthKey = "selectedCalendarMonth"
+/// 月份与选中日期只在当天有效，跨天后自动回到今天。
+private enum CalendarWidgetState {
+    private static let displayedMonthKey = "displayedMonth"
+    private static let selectedDateKey = "selectedDate"
+    private static let anchorDayKey = "stateAnchorDay"
+    private static let legacySelectedMonthKey = "selectedCalendarMonth"
 
-    private static var calendar: Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.locale = Locale(identifier: "zh_CN")
-        calendar.timeZone = .autoupdatingCurrent
-        return calendar
+    struct Snapshot {
+        let displayedMonth: WidgetDateKey
+        let selectedDate: WidgetDateKey
     }
 
-    static func displayedMonth(referenceDate: Date) -> Date {
-        if let selectedMonth = UserDefaults.standard.object(forKey: selectedMonthKey) as? Date {
-            return startOfMonth(containing: selectedMonth)
+    static func snapshot(today: Date) -> Snapshot {
+        let todayKey = WidgetDateKey(today, calendar: .widgetGregorian)
+        let defaults = UserDefaults.standard
+        guard
+            defaults.string(forKey: anchorDayKey) == todayKey.stringValue,
+            let month = defaults.string(forKey: displayedMonthKey).flatMap(WidgetDateKey.init(string:)),
+            let selected = defaults.string(forKey: selectedDateKey).flatMap(WidgetDateKey.init(string:))
+        else {
+            return Snapshot(displayedMonth: todayKey.monthStart, selectedDate: todayKey)
         }
-        return startOfMonth(containing: referenceDate)
+        return Snapshot(displayedMonth: month, selectedDate: selected)
     }
 
     static func move(by monthCount: Int) {
-        let baseMonth = displayedMonth(referenceDate: Date())
-        guard let destination = calendar.date(byAdding: .month, value: monthCount, to: baseMonth) else {
-            return
+        let calendar = Calendar.widgetGregorian
+        let todayKey = WidgetDateKey(Date(), calendar: calendar)
+        let current = snapshot(today: Date())
+        let month = current.displayedMonth.addingMonths(monthCount)
+        let selected: WidgetDateKey
+        if month == todayKey.monthStart {
+            selected = todayKey
+        } else {
+            let monthDate = calendar.date(from: DateComponents(year: month.year, month: month.month, day: 1, hour: 12))
+            let dayCount = monthDate.flatMap { calendar.range(of: .day, in: .month, for: $0)?.count } ?? 28
+            selected = WidgetDateKey(month.year, month.month, min(current.selectedDate.day, dayCount))
         }
-        UserDefaults.standard.set(startOfMonth(containing: destination), forKey: selectedMonthKey)
-        reloadWidget()
+        save(displayedMonth: month, selectedDate: selected, today: todayKey)
+    }
+
+    static func select(_ date: WidgetDateKey) {
+        let todayKey = WidgetDateKey(Date(), calendar: .widgetGregorian)
+        save(displayedMonth: date.monthStart, selectedDate: date, today: todayKey)
     }
 
     static func showToday() {
-        UserDefaults.standard.removeObject(forKey: selectedMonthKey)
-        reloadWidget()
+        let defaults = UserDefaults.standard
+        for key in [displayedMonthKey, selectedDateKey, anchorDayKey, legacySelectedMonthKey] {
+            defaults.removeObject(forKey: key)
+        }
+        performanceLog.debug("intent: today")
     }
 
-    private static func startOfMonth(containing date: Date) -> Date {
-        let components = calendar.dateComponents([.year, .month], from: date)
-        return calendar.date(
-            from: DateComponents(
-                year: components.year,
-                month: components.month,
-                day: 1,
-                hour: 12
-            )
-        ) ?? date
-    }
-
-    private static func reloadWidget() {
-        WidgetCenter.shared.reloadTimelines(ofKind: CalendarWidgetConstants.kind)
+    private static func save(displayedMonth: WidgetDateKey, selectedDate: WidgetDateKey, today: WidgetDateKey) {
+        let defaults = UserDefaults.standard
+        defaults.set(displayedMonth.stringValue, forKey: displayedMonthKey)
+        defaults.set(selectedDate.stringValue, forKey: selectedDateKey)
+        defaults.set(today.stringValue, forKey: anchorDayKey)
+        defaults.removeObject(forKey: legacySelectedMonthKey)
+        performanceLog.debug("intent: month \(displayedMonth.monthKey, privacy: .public) selected \(selectedDate.stringValue, privacy: .public)")
     }
 }
 
@@ -91,7 +89,7 @@ struct PreviousMonthIntent: AppIntent {
     static let openAppWhenRun = false
 
     func perform() async throws -> some IntentResult {
-        CalendarWidgetNavigation.move(by: -1)
+        CalendarWidgetState.move(by: -1)
         return .result()
     }
 }
@@ -102,7 +100,7 @@ struct NextMonthIntent: AppIntent {
     static let openAppWhenRun = false
 
     func perform() async throws -> some IntentResult {
-        CalendarWidgetNavigation.move(by: 1)
+        CalendarWidgetState.move(by: 1)
         return .result()
     }
 }
@@ -113,245 +111,191 @@ struct TodayIntent: AppIntent {
     static let openAppWhenRun = false
 
     func perform() async throws -> some IntentResult {
-        CalendarWidgetNavigation.showToday()
+        CalendarWidgetState.showToday()
         return .result()
     }
 }
 
+struct SelectDateIntent: AppIntent {
+    static let title: LocalizedStringResource = "选择日期"
+    static let description = IntentDescription("在桌面日历中选中某一天并查看当日农历详情")
+    static let openAppWhenRun = false
+    static let isDiscoverable = false
+
+    @Parameter(title: "日期")
+    var date: Int
+
+    init() {}
+
+    init(date: WidgetDateKey) {
+        self.date = date.number
+    }
+
+    func perform() async throws -> some IntentResult {
+        if let key = WidgetDateKey(number: date) {
+            CalendarWidgetState.select(key)
+        }
+        return .result()
+    }
+}
+
+private struct DayDetail {
+    let dateTitle: String
+    let festivals: String
+    let lunarTitle: String
+    let ganzhi: String
+    let suit: String
+    let avoid: String
+}
+
 private struct WidgetCalendarModel {
-    var gregorian: Calendar
-    var chinese: Calendar
+    static let shared = WidgetCalendarModel()
 
-    private let recurringEvents: [String: [String]] = [
-        "01-01": ["元旦"],
-        "03-08": ["国际妇女节"],
-        "04-22": ["世界地球日"],
-        "05-01": ["劳动节"],
-        "05-04": ["青年节"],
-        "06-01": ["儿童节"],
-        "08-01": ["建军节"],
-        "09-10": ["教师节"],
-        "09-20": ["全国爱牙日", "清洁地球日"],
-        "10-01": ["国庆节"],
-        "12-25": ["圣诞节"]
-    ]
-
-    private let holidayNames: [WidgetDateKey: String] = [
-        WidgetDateKey(2026, 1, 1): "元旦",
-        WidgetDateKey(2026, 2, 17): "春节",
-        WidgetDateKey(2026, 4, 5): "清明节",
-        WidgetDateKey(2026, 5, 1): "劳动节",
-        WidgetDateKey(2026, 6, 19): "端午节",
-        WidgetDateKey(2026, 9, 25): "中秋节",
-        WidgetDateKey(2026, 10, 1): "国庆节"
-    ]
-
-    private let solarTerms: [WidgetDateKey: String] = [
-        WidgetDateKey(2026, 1, 5): "小寒",
-        WidgetDateKey(2026, 1, 20): "大寒",
-        WidgetDateKey(2026, 2, 4): "立春",
-        WidgetDateKey(2026, 2, 18): "雨水",
-        WidgetDateKey(2026, 3, 5): "惊蛰",
-        WidgetDateKey(2026, 3, 20): "春分",
-        WidgetDateKey(2026, 4, 5): "清明",
-        WidgetDateKey(2026, 4, 20): "谷雨",
-        WidgetDateKey(2026, 5, 5): "立夏",
-        WidgetDateKey(2026, 5, 21): "小满",
-        WidgetDateKey(2026, 6, 5): "芒种",
-        WidgetDateKey(2026, 6, 21): "夏至",
-        WidgetDateKey(2026, 7, 7): "小暑",
-        WidgetDateKey(2026, 7, 23): "大暑",
-        WidgetDateKey(2026, 8, 7): "立秋",
-        WidgetDateKey(2026, 8, 23): "处暑",
-        WidgetDateKey(2026, 9, 7): "白露",
-        WidgetDateKey(2026, 9, 23): "秋分",
-        WidgetDateKey(2026, 10, 8): "寒露",
-        WidgetDateKey(2026, 10, 23): "霜降",
-        WidgetDateKey(2026, 11, 7): "立冬",
-        WidgetDateKey(2026, 11, 22): "小雪",
-        WidgetDateKey(2026, 12, 7): "大雪",
-        WidgetDateKey(2026, 12, 22): "冬至"
-    ]
-
-    init() {
-        var gregorian = Calendar(identifier: .gregorian)
-        gregorian.locale = Locale(identifier: "zh_CN")
-        gregorian.timeZone = .autoupdatingCurrent
-        gregorian.firstWeekday = 2
-        self.gregorian = gregorian
-
+    let gregorian = Calendar.widgetGregorian
+    let chinese: Calendar = {
         var chinese = Calendar(identifier: .chinese)
         chinese.locale = Locale(identifier: "zh_CN")
         chinese.timeZone = .autoupdatingCurrent
-        self.chinese = chinese
-    }
+        return chinese
+    }()
 
-    func date(year: Int, month: Int, day: Int) -> Date {
-        gregorian.date(from: DateComponents(year: year, month: month, day: day, hour: 12)) ?? Date()
+    private let officialHolidays = ["元旦", "春节", "清明", "劳动节", "端午节", "中秋节", "国庆节"]
+
+    func date(for key: WidgetDateKey) -> Date {
+        gregorian.date(from: DateComponents(year: key.year, month: key.month, day: key.day, hour: 12)) ?? Date()
     }
 
     func key(for date: Date) -> WidgetDateKey {
         WidgetDateKey(date, calendar: gregorian)
     }
 
-    func isSameDay(_ lhs: Date, _ rhs: Date) -> Bool {
-        gregorian.isDate(lhs, inSameDayAs: rhs)
+    func shifted(_ key: WidgetDateKey, by days: Int) -> WidgetDateKey {
+        self.key(for: gregorian.date(byAdding: .day, value: days, to: date(for: key)) ?? date(for: key))
     }
 
-    func visibleDates(containing date: Date) -> [Date] {
-        let components = gregorian.dateComponents([.year, .month], from: date)
-        let firstDay = self.date(
-            year: components.year ?? 2026,
-            month: components.month ?? 1,
-            day: 1
-        )
-        let weekday = gregorian.component(.weekday, from: firstDay)
+    func distance(from start: WidgetDateKey, to end: WidgetDateKey) -> Int {
+        gregorian.dateComponents([.day], from: date(for: start), to: date(for: end)).day ?? 0
+    }
+
+    func isWeekend(_ key: WidgetDateKey) -> Bool {
+        let weekday = gregorian.component(.weekday, from: date(for: key))
+        return weekday == 1 || weekday == 7
+    }
+
+    func visibleDays(for month: WidgetDateKey) -> [WidgetDateKey] {
+        let firstDay = month.monthStart
+        let weekday = gregorian.component(.weekday, from: date(for: firstDay))
         let daysFromMonday = (weekday + 5) % 7
-        guard let startDate = gregorian.date(byAdding: .day, value: -daysFromMonday, to: firstDay) else {
-            return []
-        }
-        return (0..<42).compactMap {
-            gregorian.date(byAdding: .day, value: $0, to: startDate)
-        }
+        let start = shifted(firstDay, by: -daysFromMonday)
+        return (0..<42).map { shifted(start, by: $0) }
     }
 
-    func marker(for date: Date) -> WidgetWorkMarker? {
-        let key = key(for: date)
-        let restDates: Set<WidgetDateKey> = [
-            WidgetDateKey(2026, 1, 1), WidgetDateKey(2026, 1, 2), WidgetDateKey(2026, 1, 3),
-            WidgetDateKey(2026, 2, 15), WidgetDateKey(2026, 2, 16),
-            WidgetDateKey(2026, 2, 17), WidgetDateKey(2026, 2, 18),
-            WidgetDateKey(2026, 2, 19), WidgetDateKey(2026, 2, 20),
-            WidgetDateKey(2026, 2, 21), WidgetDateKey(2026, 2, 22),
-            WidgetDateKey(2026, 2, 23),
-            WidgetDateKey(2026, 4, 4), WidgetDateKey(2026, 4, 5), WidgetDateKey(2026, 4, 6),
-            WidgetDateKey(2026, 5, 1), WidgetDateKey(2026, 5, 2),
-            WidgetDateKey(2026, 5, 3), WidgetDateKey(2026, 5, 4), WidgetDateKey(2026, 5, 5),
-            WidgetDateKey(2026, 6, 19), WidgetDateKey(2026, 6, 20), WidgetDateKey(2026, 6, 21),
-            WidgetDateKey(2026, 9, 25), WidgetDateKey(2026, 9, 26), WidgetDateKey(2026, 9, 27),
-            WidgetDateKey(2026, 10, 1), WidgetDateKey(2026, 10, 2),
-            WidgetDateKey(2026, 10, 3), WidgetDateKey(2026, 10, 4),
-            WidgetDateKey(2026, 10, 5), WidgetDateKey(2026, 10, 6),
-            WidgetDateKey(2026, 10, 7)
-        ]
-        let workDates: Set<WidgetDateKey> = [
-            WidgetDateKey(2026, 1, 4),
-            WidgetDateKey(2026, 2, 14), WidgetDateKey(2026, 2, 28),
-            WidgetDateKey(2026, 5, 9),
-            WidgetDateKey(2026, 9, 20),
-            WidgetDateKey(2026, 10, 10)
-        ]
-
-        if restDates.contains(key) {
-            return .rest
-        }
-        if workDates.contains(key) {
-            return .work
-        }
-        return nil
-    }
-
-    func dayLabel(for date: Date) -> String {
-        let key = key(for: date)
-        if key != WidgetDateKey(2026, 9, 20) {
-            if let holiday = holidayNames[key] {
-                return holiday
-            }
-            if let term = solarTerms[key] {
+    func dayLabel(for key: WidgetDateKey, day: CalendarDay?) -> String {
+        if let day, !day.lunarDay.isEmpty {
+            if let term = day.terms.first {
                 return term
             }
-            let monthDay = String(format: "%02d-%02d", key.month, key.day)
-            if let event = recurringEvents[monthDay]?.first {
-                return event
-            }
+            return day.lunarDay == "初一" ? day.lunarMonthTitle : day.lunarDay
         }
-
-        let lunar = lunarComponents(for: date)
-        if lunar.month == 1 && lunar.day == 1 {
-            return "春节"
-        }
-        if lunar.month == 1 && lunar.day == 15 {
-            return "元宵节"
-        }
-        if lunar.month == 5 && lunar.day == 5 {
-            return "端午节"
-        }
-        if lunar.month == 8 && lunar.day == 15 {
-            return "中秋节"
-        }
+        let lunar = lunarComponents(for: key)
         return lunar.day == 1
             ? lunarMonthName(lunar.month, isLeap: lunar.isLeap)
             : lunarDayName(lunar.day)
     }
 
-    func lunarTitle(for date: Date) -> String {
-        let lunar = lunarComponents(for: date)
-        return "\(lunarMonthName(lunar.month, isLeap: lunar.isLeap))\(lunarDayName(lunar.day))"
-    }
+    func detail(for key: WidgetDateKey, day: CalendarDay?, today: WidgetDateKey) -> DayDetail {
+        let offset = distance(from: today, to: key)
+        let relative: String
+        switch offset {
+        case 0: relative = "今天"
+        case 1: relative = "明天"
+        case -1: relative = "昨天"
+        case let value where value > 0: relative = "\(value)天后"
+        default: relative = "\(-offset)天前"
+        }
+        let dateTitle = "\(key.month)月\(key.day)日 \(weekdayName(for: key)) · \(relative)"
 
-    func zodiacTitle(for date: Date) -> String {
-        let year = chinese.dateComponents([.year], from: date).year ?? 1
-        let stems = ["甲", "乙", "丙", "丁", "戊", "己", "庚", "辛", "壬", "癸"]
-        let branches = ["子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"]
-        let animals = ["鼠", "牛", "虎", "兔", "龙", "蛇", "马", "羊", "猴", "鸡", "狗", "猪"]
-        let stemIndex = (year - 1) % stems.count
-        let branchIndex = (year - 1) % branches.count
-        return "\(stems[stemIndex])\(branches[branchIndex])年 · \(animals[branchIndex])"
-    }
-
-    func eventSummary(for date: Date) -> String {
-        let key = key(for: date)
-        var events: [String] = []
-        if let holiday = holidayNames[key] {
-            events.append(holiday)
-        }
-        if let term = solarTerms[key], !events.contains(term) {
-            events.append(term)
-        }
-        let monthDay = String(format: "%02d-%02d", key.month, key.day)
-        for event in recurringEvents[monthDay] ?? [] where !events.contains(event) {
-            events.append(event)
-        }
-        if events.isEmpty {
-            return "\(weekdayName(for: date)) · 农历\(lunarTitle(for: date))"
-        }
-        return events.joined(separator: " · ")
-    }
-
-    func countdown(for date: Date) -> String {
-        let start = gregorian.startOfDay(for: date)
-        let targets: [(Date, String)] = [
-            (self.date(year: 2026, month: 9, day: 25), "2026年中秋节"),
-            (self.date(year: 2026, month: 10, day: 1), "2026年国庆节")
-        ]
-        for (target, name) in targets where target >= start {
-            let days = gregorian.dateComponents([.day], from: start, to: target).day ?? 0
-            if days == 0 {
-                return "今天是\(name)"
-            }
-            return "距离 \(name) 还有\(days)天"
-        }
-        return "愿今天安排从容"
-    }
-
-    func almanac(for date: Date) -> (good: String, avoid: String) {
-        if key(for: date) == WidgetDateKey(2026, 9, 20) {
-            return (
-                "出行·房屋清洁·沐浴·安葬·祭祀·除事勿取",
-                "买房·动土·掘井·破土"
+        guard let day, !day.lunarDay.isEmpty else {
+            let lunar = lunarComponents(for: key)
+            return DayDetail(
+                dateTitle: dateTitle,
+                festivals: "暂无节日",
+                lunarTitle: "\(lunarMonthName(lunar.month, isLeap: lunar.isLeap))\(lunarDayName(lunar.day))",
+                ganzhi: fallbackYearTitle(for: key),
+                suit: "—",
+                avoid: "—"
             )
         }
-        return ("整理·学习·出行·会友", "行程过满·熬夜")
+
+        var festivals = day.festivals
+        for term in day.terms where !festivals.contains(term) {
+            festivals.insert(term, at: 0)
+        }
+        return DayDetail(
+            dateTitle: dateTitle,
+            festivals: festivals.isEmpty ? "暂无节日" : festivals.prefix(3).joined(separator: " · "),
+            lunarTitle: "\(day.lunarMonthTitle)\(day.lunarDay)",
+            ganzhi: "\(day.ganzhiYear)\(day.animal)年 \(day.ganzhiMonth)月 \(day.ganzhiDay)日",
+            suit: day.suit.isEmpty ? "—" : day.suit.prefix(6).joined(separator: "·"),
+            avoid: day.avoid.isEmpty ? "—" : day.avoid.prefix(6).joined(separator: "·")
+        )
     }
 
-    func weekdayName(for date: Date) -> String {
+    func countdown(today: WidgetDateKey, days: [WidgetDateKey: CalendarDay]) -> String {
+        guard let first = days.values
+            .filter({ $0.key >= today && $0.status == .rest })
+            .min(by: { $0.key < $1.key })
+        else {
+            return "后续假期安排待官方公布"
+        }
+
+        var block = [first]
+        var cursor = first.key
+        while let previous = days[shifted(cursor, by: -1)], previous.status == .rest {
+            block.insert(previous, at: 0)
+            cursor = previous.key
+        }
+        cursor = first.key
+        while let next = days[shifted(cursor, by: 1)], next.status == .rest {
+            block.append(next)
+            cursor = next.key
+        }
+
+        let name = holidayName(in: block)
+        if first.key == today {
+            return "今天是\(name)假期 · 共放假\(block.count)天"
+        }
+        return "距离 \(first.key.year)年\(name) 还有\(distance(from: today, to: first.key))天 · 放假\(block.count)天"
+    }
+
+    private func holidayName(in block: [CalendarDay]) -> String {
+        for day in block {
+            for name in day.terms + day.festivals {
+                if let official = officialHolidays.first(where: { name.hasPrefix($0) }) {
+                    return official == "清明" ? "清明节" : official
+                }
+            }
+        }
+        return "法定节假日"
+    }
+
+    private func weekdayName(for key: WidgetDateKey) -> String {
         let names = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"]
-        let index = max(1, min(7, gregorian.component(.weekday, from: date))) - 1
+        let index = max(1, min(7, gregorian.component(.weekday, from: date(for: key)))) - 1
         return names[index]
     }
 
-    private func lunarComponents(for date: Date) -> (month: Int, day: Int, isLeap: Bool) {
-        let components = chinese.dateComponents([.month, .day, .isLeapMonth], from: date)
+    private func fallbackYearTitle(for key: WidgetDateKey) -> String {
+        let year = chinese.dateComponents([.year], from: date(for: key)).year ?? 1
+        let stems = ["甲", "乙", "丙", "丁", "戊", "己", "庚", "辛", "壬", "癸"]
+        let branches = ["子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"]
+        let animals = ["鼠", "牛", "虎", "兔", "龙", "蛇", "马", "羊", "猴", "鸡", "狗", "猪"]
+        let branchIndex = (year - 1) % branches.count
+        return "\(stems[(year - 1) % stems.count])\(branches[branchIndex])\(animals[branchIndex])年"
+    }
+
+    private func lunarComponents(for key: WidgetDateKey) -> (month: Int, day: Int, isLeap: Bool) {
+        let components = chinese.dateComponents([.month, .day, .isLeapMonth], from: date(for: key))
         return (
             max(1, min(12, components.month ?? 1)),
             max(1, min(30, components.day ?? 1)),
@@ -360,7 +304,7 @@ private struct WidgetCalendarModel {
     }
 
     private func lunarMonthName(_ month: Int, isLeap: Bool) -> String {
-        let names = ["正月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "冬月", "腊月"]
+        let names = ["正月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "十一月", "腊月"]
         let name = names[max(1, min(12, month)) - 1]
         return isLeap ? "闰\(name)" : name
     }
@@ -377,38 +321,69 @@ private struct WidgetCalendarModel {
 
 private struct CalendarWidgetEntry: TimelineEntry {
     let date: Date
-    let displayedMonth: Date
+    let today: WidgetDateKey
+    let displayedMonth: WidgetDateKey
+    let selectedDate: WidgetDateKey
+    let days: [WidgetDateKey: CalendarDay]
+    let countdown: String
 }
 
 private struct CalendarWidgetProvider: TimelineProvider {
+    private let model = WidgetCalendarModel.shared
+
     func placeholder(in context: Context) -> CalendarWidgetEntry {
-        makeEntry(for: Date())
+        makeEntry(for: Date(), days: [:])
     }
 
     func getSnapshot(in context: Context, completion: @escaping (CalendarWidgetEntry) -> Void) {
-        completion(makeEntry(for: Date()))
+        completion(makeEntry(for: Date(), days: CalendarDataStore.cachedDays()))
     }
 
     func getTimeline(
         in context: Context,
         completion: @escaping (Timeline<CalendarWidgetEntry>) -> Void
     ) {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = .autoupdatingCurrent
+        let started = Date()
         let now = Date()
+        let days = CalendarDataStore.cachedDays()
+        let calendar = Calendar.widgetGregorian
         let startOfToday = calendar.startOfDay(for: now)
         let nextDay = calendar.date(byAdding: .day, value: 1, to: startOfToday) ?? now.addingTimeInterval(86_400)
-        let entries = [
-            makeEntry(for: now),
-            makeEntry(for: nextDay)
-        ]
-        completion(Timeline(entries: entries, policy: .after(nextDay)))
+        let refreshDate = min(nextDay, now.addingTimeInterval(CalendarDataStore.refreshInterval))
+        // 每个条目都要按多种外观各渲染一遍，只放一个条目以缩短点击后的渲染时间；跨天由到期刷新完成。
+        let entry = makeEntry(for: now, days: days)
+        completion(Timeline(entries: [entry], policy: .after(refreshDate)))
+        performanceLog.debug("timeline built in \(Int(Date().timeIntervalSince(started) * 1000)) ms")
+
+        // 先用缓存立即响应点击，联网更新放到后台，数据有变化时再刷新一次。
+        let displayed = entry.displayedMonth
+        let todayMonth = entry.today.monthStart
+        Task {
+            let changed = await CalendarDataStore.refreshIfNeeded(
+                centers: [
+                    todayMonth.addingMonths(1),
+                    displayed,
+                    displayed.addingMonths(3),
+                    displayed.addingMonths(-3)
+                ],
+                now: now
+            )
+            if changed {
+                WidgetCenter.shared.reloadTimelines(ofKind: CalendarWidgetConstants.kind)
+            }
+        }
     }
 
-    private func makeEntry(for date: Date) -> CalendarWidgetEntry {
-        CalendarWidgetEntry(
+    private func makeEntry(for date: Date, days: [WidgetDateKey: CalendarDay]) -> CalendarWidgetEntry {
+        let today = model.key(for: date)
+        let state = CalendarWidgetState.snapshot(today: date)
+        return CalendarWidgetEntry(
             date: date,
-            displayedMonth: CalendarWidgetNavigation.displayedMonth(referenceDate: date)
+            today: today,
+            displayedMonth: state.displayedMonth,
+            selectedDate: state.selectedDate,
+            days: days,
+            countdown: model.countdown(today: today, days: days)
         )
     }
 }
@@ -417,7 +392,7 @@ private struct CalendarWidgetView: View {
     let entry: CalendarWidgetEntry
     @Environment(\.widgetFamily) private var family
 
-    private let model = WidgetCalendarModel()
+    private let model = WidgetCalendarModel.shared
     private let weekdayNames = ["一", "二", "三", "四", "五", "六", "日"]
 
     var body: some View {
@@ -430,21 +405,17 @@ private struct CalendarWidgetView: View {
 
     @ViewBuilder
     private var content: some View {
-        let dates = model.visibleDates(containing: entry.displayedMonth)
-        let selectedKey = model.key(for: entry.displayedMonth)
-        let currentMonth = selectedKey.month
-        let currentYear = selectedKey.year
+        let month = entry.displayedMonth
         let compact = family == .systemLarge
 
         VStack(spacing: 0) {
-            header(year: currentYear, month: currentMonth, compact: compact)
+            header(year: month.year, month: month.month, compact: compact)
             weekdayHeader(compact: compact)
                 .padding(.horizontal, compact ? 4 : 12)
                 .padding(.top, compact ? 2 : 8)
             calendarGrid(
-                dates: dates,
-                currentYear: currentYear,
-                currentMonth: currentMonth,
+                days: model.visibleDays(for: month),
+                month: month,
                 compact: compact
             )
                 .padding(.horizontal, compact ? 4 : 10)
@@ -454,10 +425,6 @@ private struct CalendarWidgetView: View {
                 compactDetails
                     .padding(.horizontal, 4)
                     .padding(.top, 4)
-            } else if family == .systemExtraLarge {
-                details
-                    .padding(.horizontal, 10)
-                    .padding(.top, 8)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -480,7 +447,11 @@ private struct CalendarWidgetView: View {
     }
 
     private var compactDetails: some View {
-        let almanac = model.almanac(for: entry.date)
+        let detail = model.detail(
+            for: entry.selectedDate,
+            day: entry.days[entry.selectedDate],
+            today: entry.today
+        )
         return VStack(spacing: 0) {
             HStack(spacing: 5) {
                 Text("节日百科")
@@ -490,12 +461,17 @@ private struct CalendarWidgetView: View {
                     .padding(.vertical, 2)
                     .background(Color.blue.opacity(0.06))
                     .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-                Text(model.eventSummary(for: entry.date))
+                Text(detail.festivals)
                     .font(.system(size: 9))
                     .foregroundStyle(WidgetPalette.ink.opacity(0.82))
                     .lineLimit(1)
                     .minimumScaleFactor(0.65)
-                Spacer(minLength: 0)
+                Spacer(minLength: 4)
+                Text(detail.dateTitle)
+                    .font(.system(size: 8))
+                    .foregroundStyle(WidgetPalette.mutedInk)
+                    .lineLimit(1)
+                    .fixedSize()
             }
             .frame(height: 18)
 
@@ -503,42 +479,22 @@ private struct CalendarWidgetView: View {
 
             HStack(alignment: .center, spacing: 6) {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(model.lunarTitle(for: entry.date))
+                    Text(detail.lunarTitle)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(WidgetPalette.ink)
-                    Text(model.zodiacTitle(for: entry.date))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    Text(detail.ganzhi)
                         .font(.system(size: 8, weight: .medium))
                         .foregroundStyle(WidgetPalette.mutedInk)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                 }
-                .frame(width: 58, alignment: .leading)
+                .frame(width: 84, alignment: .leading)
 
                 VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 3) {
-                        Text("宜")
-                            .font(.system(size: 7, weight: .medium))
-                            .foregroundStyle(.white)
-                            .frame(width: 13, height: 13)
-                            .background(Color.red)
-                            .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-                        Text(almanac.good)
-                            .font(.system(size: 8))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.6)
-                            .foregroundStyle(WidgetPalette.ink.opacity(0.78))
-                    }
-                    HStack(spacing: 3) {
-                        Text("忌")
-                            .font(.system(size: 7, weight: .medium))
-                            .foregroundStyle(.white)
-                            .frame(width: 13, height: 13)
-                            .background(Color.gray)
-                            .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-                        Text(almanac.avoid)
-                            .font(.system(size: 8))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.6)
-                            .foregroundStyle(WidgetPalette.ink.opacity(0.78))
-                    }
+                    almanacLine(tag: "宜", text: detail.suit, color: .red)
+                    almanacLine(tag: "忌", text: detail.avoid, color: .gray)
                 }
                 Spacer(minLength: 0)
             }
@@ -549,7 +505,7 @@ private struct CalendarWidgetView: View {
             HStack(spacing: 5) {
                 Image(systemName: "clock")
                     .font(.system(size: 10))
-                Text(model.countdown(for: entry.date))
+                Text(entry.countdown)
                     .font(.system(size: 9))
                     .lineLimit(1)
                     .minimumScaleFactor(0.65)
@@ -564,6 +520,22 @@ private struct CalendarWidgetView: View {
         .frame(height: 80)
         .background(Color(red: 0.97, green: 0.97, blue: 0.99))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func almanacLine(tag: String, text: String, color: Color) -> some View {
+        HStack(spacing: 3) {
+            Text(tag)
+                .font(.system(size: 7, weight: .medium))
+                .foregroundStyle(.white)
+                .frame(width: 13, height: 13)
+                .background(color)
+                .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+            Text(text)
+                .font(.system(size: 8))
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+                .foregroundStyle(WidgetPalette.ink.opacity(0.78))
+        }
     }
 
     private func header(year: Int, month: Int, compact: Bool) -> some View {
@@ -665,7 +637,7 @@ private struct CalendarWidgetView: View {
             ForEach(Array(weekdayNames.enumerated()), id: \.offset) { index, weekday in
                 Text(weekday)
                     .font(.system(size: compact ? 9 : 12, weight: .medium))
-                    .foregroundStyle(index >= 5 ? Color.red.opacity(0.88) : WidgetPalette.mutedInk)
+                    .foregroundStyle(index >= 5 ? WidgetPalette.holiday : WidgetPalette.mutedInk)
                     .frame(maxWidth: .infinity)
             }
         }
@@ -673,151 +645,87 @@ private struct CalendarWidgetView: View {
     }
 
     private func calendarGrid(
-        dates: [Date],
-        currentYear: Int,
-        currentMonth: Int,
+        days: [WidgetDateKey],
+        month: WidgetDateKey,
         compact: Bool
     ) -> some View {
-        LazyVGrid(
-            columns: Array(
-                repeating: GridItem(.flexible(), spacing: compact ? 1 : 2),
-                count: 7
-            ),
-            spacing: compact ? 1 : (family == .systemSmall ? 3 : 5)
-        ) {
-            ForEach(Array(dates.enumerated()), id: \.offset) { _, date in
-                dayCell(
-                    date: date,
-                    currentYear: currentYear,
-                    currentMonth: currentMonth,
-                    compact: compact
-                )
+        VStack(spacing: compact ? 1 : 5) {
+            ForEach(0..<days.count / 7, id: \.self) { row in
+                HStack(spacing: compact ? 1 : 2) {
+                    ForEach(days[(row * 7)..<(row * 7 + 7)], id: \.self) { key in
+                        dayCell(key: key, month: month, compact: compact)
+                    }
+                }
             }
         }
     }
 
-    private func dayCell(
-        date: Date,
-        currentYear: Int,
-        currentMonth: Int,
-        compact: Bool
-    ) -> some View {
-        let key = model.key(for: date)
-        let inCurrentMonth = key.year == currentYear && key.month == currentMonth
-        let selected = model.isSameDay(date, entry.date)
-        let marker = model.marker(for: date)
-        let numberColor = selected
-            ? Color(red: 0.29, green: 0.43, blue: 0.88)
-            : (marker == .rest || keyDayIsWeekend(date) ? Color.red.opacity(0.88) : WidgetPalette.ink)
+    private func dayCell(key: WidgetDateKey, month: WidgetDateKey, compact: Bool) -> some View {
+        let day = entry.days[key]
+        let status = day?.status
+        let inCurrentMonth = key.year == month.year && key.month == month.month
+        let isToday = key == entry.today
+        let isSelected = key == entry.selectedDate
+        let isRedDay = status == .rest || (status != .work && model.isWeekend(key))
+        let numberColor = isToday ? WidgetPalette.accent : (isRedDay ? WidgetPalette.holiday : WidgetPalette.ink)
+        let fadedOpacity = inCurrentMonth ? 1.0 : 0.28
+        let label = model.dayLabel(for: key, day: day)
+        let fill: Color? = isToday
+            ? WidgetPalette.accent.opacity(0.10)
+            : (status == .rest ? Color.red.opacity(0.06) : nil)
 
-        return VStack(spacing: 1) {
+        let cell = VStack(spacing: 1) {
             Text("\(key.day)")
-                .font(
-                    .system(
-                        size: compact ? 13 : (family == .systemSmall ? 13 : 17),
-                        weight: .medium
-                    )
-                )
-                .foregroundStyle(numberColor.opacity(inCurrentMonth ? 1 : 0.28))
+                .font(.system(size: compact ? 13 : 17, weight: .medium))
+                .foregroundStyle(numberColor.opacity(fadedOpacity))
                 .frame(maxWidth: .infinity)
-            Text(model.dayLabel(for: date))
-                .font(
-                    .system(
-                        size: compact ? 8 : (family == .systemSmall ? 8 : 10),
-                        weight: .regular
-                    )
-                )
+            Text(label)
+                .font(.system(size: compact ? 8 : 10, weight: .regular))
                 .lineLimit(1)
-                .minimumScaleFactor(0.65)
+                .minimumScaleFactor(label.count > 4 ? 0.65 : 1)
                 .foregroundStyle(
-                    (marker == .rest || selected ? numberColor : WidgetPalette.mutedInk)
-                        .opacity(inCurrentMonth ? 1 : 0.28)
+                    (status == .rest || isToday ? numberColor : WidgetPalette.mutedInk)
+                        .opacity(fadedOpacity)
                 )
                 .frame(maxWidth: .infinity)
         }
         .frame(height: compact ? 30 : nil)
-        .padding(.vertical, compact ? 1 : (family == .systemSmall ? 2 : 4))
-        .background(marker == .rest ? Color.red.opacity(0.06) : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .padding(.vertical, compact ? 1 : 4)
+        .background {
+            if let fill {
+                RoundedRectangle(cornerRadius: 6, style: .continuous).fill(fill)
+            }
+        }
         .overlay {
-            if selected {
+            if isSelected {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(Color(red: 0.32, green: 0.46, blue: 0.91), lineWidth: 1.5)
+                    .stroke(WidgetPalette.selection, lineWidth: 1.5)
             }
         }
         .overlay(alignment: .topTrailing) {
-            if let marker {
-                Text(marker == .rest ? "休" : "班")
+            if let status {
+                Text(status == .rest ? "休" : "班")
                     .font(.system(size: compact ? 6 : 7, weight: .medium))
                     .foregroundStyle(.white)
                     .padding(.horizontal, compact ? 2 : 3)
                     .padding(.vertical, compact ? 1 : 2)
-                    .background(marker == .rest ? Color.red.opacity(0.88) : Color.gray)
+                    .background(status == .rest ? WidgetPalette.holiday : Color.gray)
                     .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                    .opacity(inCurrentMonth ? 1 : 0.5)
                     .offset(x: 2, y: -2)
             }
         }
-    }
+        .contentShape(Rectangle())
 
-    private var details: some View {
-        let almanac = model.almanac(for: entry.date)
-        return VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Text("节日百科")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(Color.blue.opacity(0.78))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 4)
-                    .background(Color.blue.opacity(0.06))
-                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                Text(model.eventSummary(for: entry.date))
-                    .font(.system(size: 11))
-                    .foregroundStyle(WidgetPalette.ink.opacity(0.78))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                Spacer(minLength: 0)
+        // 每个按钮都会显著增加点击后的渲染时间，淡灰色的上下月日期不做成按钮。
+        return Group {
+            if inCurrentMonth {
+                Button(intent: SelectDateIntent(date: key)) { cell }
+                    .buttonStyle(.plain)
+            } else {
+                cell
             }
-            .padding(.bottom, 6)
-
-            Divider()
-
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(model.lunarTitle(for: entry.date))
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(WidgetPalette.ink)
-                    Text(model.zodiacTitle(for: entry.date))
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(WidgetPalette.mutedInk)
-                }
-                .frame(width: 76, alignment: .leading)
-
-                VStack(alignment: .leading, spacing: 5) {
-                    AlmanacLine(tag: "宜", text: almanac.good, color: .red)
-                    AlmanacLine(tag: "忌", text: almanac.avoid, color: .gray)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.vertical, 7)
-
-            Divider()
-
-            HStack(spacing: 7) {
-                Image(systemName: "clock")
-                    .font(.system(size: 12))
-                Text(model.countdown(for: entry.date))
-                    .font(.system(size: 11))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                Spacer(minLength: 0)
-                webLink(compact: false)
-            }
-            .foregroundStyle(WidgetPalette.ink.opacity(0.72))
-            .padding(.top, 7)
         }
-        .padding(9)
-        .background(Color(red: 0.97, green: 0.97, blue: 0.99))
-        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
 
     private func webLink(compact: Bool) -> some View {
@@ -840,33 +748,6 @@ private struct CalendarWidgetView: View {
         .buttonStyle(.plain)
         .help("在百度日历网页中查看更多月份")
     }
-
-    private func keyDayIsWeekend(_ date: Date) -> Bool {
-        let weekday = model.gregorian.component(.weekday, from: date)
-        return weekday == 1 || weekday == 7
-    }
-}
-
-private struct AlmanacLine: View {
-    let tag: String
-    let text: String
-    let color: Color
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Text(tag)
-                .font(.system(size: 9, weight: .medium))
-                .foregroundStyle(.white)
-                .frame(width: 17, height: 17)
-                .background(color)
-                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-            Text(text)
-                .font(.system(size: 10))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .foregroundStyle(WidgetPalette.ink.opacity(0.75))
-        }
-    }
 }
 
 struct DesktopCalendarWidget: Widget {
@@ -877,7 +758,7 @@ struct DesktopCalendarWidget: Widget {
             CalendarWidgetView(entry: entry)
         }
         .configurationDisplayName("桌面日历")
-        .description("显示公历、农历、节气和中国法定节假日，可直接切换月份。")
+        .description("与百度日历同步的法定节假日与调休安排，点击日期可查看当日农历与宜忌。")
         .supportedFamilies([.systemMedium, .systemLarge])
         .contentMarginsDisabled()
         .containerBackgroundRemovable(false)

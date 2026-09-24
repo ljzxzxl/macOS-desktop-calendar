@@ -15,19 +15,22 @@ rm -rf "$APP_DIR"
 mkdir -p "$APP_CONTENTS/MacOS" "$APP_CONTENTS/Resources" "$EXTENSION_DIR/Contents/MacOS" "$EXTENSION_DIR/Contents/Resources"
 
 swiftc \
-    -target arm64-apple-macosx26.0 \
+    -parse-as-library \
+    -target arm64-apple-macosx14.0 \
     -sdk "$SDK_PATH" \
     -framework AppKit \
+    -framework WidgetKit \
     "$PROJECT_DIR/Sources/WidgetHostMain.swift" \
     -o "$APP_EXECUTABLE"
 
 swiftc \
     -parse-as-library \
-    -target arm64-apple-macosx26.0 \
+    -target arm64-apple-macosx14.0 \
     -sdk "$SDK_PATH" \
     -framework SwiftUI \
     -framework WidgetKit \
     "$PROJECT_DIR/Sources/CalendarWidget.swift" \
+    "$PROJECT_DIR/Sources/CalendarData.swift" \
     -o "$EXTENSION_EXECUTABLE"
 
 cp "$PROJECT_DIR/Resources/Info.plist" "$APP_CONTENTS/Info.plist"

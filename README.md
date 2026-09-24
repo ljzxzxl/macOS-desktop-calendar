@@ -1,16 +1,21 @@
 # 桌面日历 · macOS Desktop Calendar
 
-一个原生 macOS WidgetKit 桌面小组件，显示公历月视图、农历、二十四节气和中国法定节假日。
+一个原生 macOS WidgetKit 桌面小组件，把百度搜索里的“日历”卡片搬到桌面上：公历月视图、农历、二十四节气，以及与官方同步更新的法定节假日和调休安排。
+
+<p align="center">
+  <img src="docs/preview.jpg" alt="桌面日历效果图" width="380">
+</p>
 
 ## 功能
 
-- 公历月视图、农历日期与二十四节气
-- 2026 年国务院公布的法定节假日及调休标记
-- 中秋、国庆等节日名称和倒计时
-- 点击小组件打开网页日历
-- WidgetKit 时间线在跨天、电脑唤醒后自动刷新
+- 公历月视图、农历日期、二十四节气与常见节日
+- 法定节假日及调休（休/班）标记，与百度日历同步；国务院公布新的放假安排后自动显示
+- 距离下一个法定假期的倒计时和放假天数
+- 点击当月任意日期即可选中，在底部查看当日节日、农历、干支和宜忌
+- 左右箭头切换月份，“今天”按钮回到当前月份
+- 底部“网页”按钮可打开百度日历
 - 作为系统桌面小组件运行，支持 Mission Control、空间切换和系统桌面布局
-- 提供中号、大号两种尺寸
+- 提供中号、大号两种尺寸（底部详情仅大号显示）
 
 ## 系统要求
 
@@ -37,7 +42,18 @@ xcodebuild -project DesktopCalendar.xcodeproj \
   build
 ```
 
+> 如果 `xcode-select -p` 指向的是 CommandLineTools，请在命令前加上 `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`。
+
 > WidgetKit 扩展需要正规的开发签名才能被系统识别。`build-widget.sh` 使用 ad-hoc 签名，只适合快速检查能否编译，生成的小组件可能不会出现在小组件列表里。
+
+### 更新已安装的版本
+
+替换 `DesktopCalendar.app` 后，负责桌面小组件的系统服务 `chronod` 仍会持有旧扩展，需要重启它并运行一次新版：
+
+```bash
+killall chronod
+open ~/Applications/DesktopCalendar.app
+```
 
 ## 使用
 
@@ -47,9 +63,35 @@ xcodebuild -project DesktopCalendar.xcodeproj \
 
 ## 数据说明
 
-- 2026 年放假和调休数据来自国务院办公厅《关于 2026 年部分节假日安排的通知》。其他年份的节假日数据暂未内置，欢迎提交 PR。
-- 农历日期由 macOS 系统日历计算。
-- 底部“宜/忌”为本地展示文案，不作为专业黄历依据。
+- 放假调休、节气、节日、农历干支与宜忌数据来自百度日历（与 [百度搜索“日历”](https://www.baidu.com/s?wd=%E6%97%A5%E5%8E%86) 同源）。小组件每 6 小时在后台刷新一次并缓存在本地，点击操作始终使用本地缓存，不等待网络。
+- 离线且没有缓存时，农历由 macOS 系统日历计算，不显示休/班标记。
+- 月份切换和选中的日期只在当天有效，跨天后自动回到今天。
+- “宜/忌”仅供参考，不作为专业黄历依据。
+
+## 项目结构
+
+| 路径 | 说明 |
+| --- | --- |
+| `Sources/CalendarData.swift` | 百度日历数据的拉取、解析与本地缓存 |
+| `Sources/CalendarWidget.swift` | 小组件时间线、视图和交互（App Intents） |
+| `Sources/WidgetHostMain.swift` | 无界面的宿主 App，负责承载扩展并在启动时刷新小组件 |
+| `Resources/` | Info.plist 与 entitlements（扩展需要网络权限） |
+
+## 常见问题
+
+**小组件只显示灰色占位块**
+
+通常是系统里注册了多份同名扩展（例如 Xcode 构建目录、旧备份），或者更新后没有重启 `chronod`。可以先查看注册情况：
+
+```bash
+pluginkit -mAv | grep desktopcalendar
+```
+
+如果出现多条记录，用 `pluginkit -r <路径>` 和 `lsregister -u <App 路径>` 移除多余的那份，再执行上面的 `killall chronod`。
+
+**点击后要约半秒才有变化**
+
+桌面小组件的每次点击都要经过系统服务转发给扩展，重新生成时间线并渲染后才会显示，这是 WidgetKit 的机制，无法做到普通 App 那样即时响应。为了缩短渲染时间，上下月的淡灰色日期不可点击，请用左右箭头切换月份。
 
 ## 声明
 

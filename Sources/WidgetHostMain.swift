@@ -1,9 +1,11 @@
 import AppKit
+import WidgetKit
 
 @MainActor
 private final class WidgetHostDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.prohibited)
+        WidgetCenter.shared.reloadAllTimelines()
     }
 }
 
