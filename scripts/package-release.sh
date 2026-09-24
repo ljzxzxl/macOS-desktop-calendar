@@ -43,6 +43,15 @@ hdiutil create -volname "DesktopCalendar $VERSION" -srcfolder "$STAGING" -fs HFS
 rm -rf "$STAGING"
 # 构建产物即使注销过也可能被系统重新登记为组件来源，打包后直接删除。
 rm -rf "$APP"
+"$LSR" -u "$PROJECT_DIR/$STAGING/DesktopCalendar.app" 2>/dev/null || true
+
+# linkd 按 bundle ID 索引 App Intents，注销或删除任一同 ID 副本都会连带清掉已安装版本的索引，
+# 导致桌面组件上的按钮全部失效，因此最后重新登记本机已安装的版本。
+INSTALLED="/Applications/DesktopCalendar.app"
+if [ -d "$INSTALLED" ]; then
+    sleep 3
+    "$LSR" -f -R -trusted "$INSTALLED"
+fi
 
 echo "==> 完成"
 echo "$DMG"

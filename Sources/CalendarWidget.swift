@@ -290,6 +290,45 @@ struct ToggleAppearanceIntent: AppIntent {
     }
 }
 
+struct WeatherDay: Codable, Equatable {
+    let condition: String
+    let iconKey: String
+    let high: Int
+    let low: Int
+}
+
+/// 百度天气（与日历同源的 opendata 接口，resource_id=4982）的精简快照。
+struct WeatherSnapshot: Codable, Equatable {
+    let location: String
+    let temperature: Int
+    let condition: String
+    let iconKey: String
+    let aqi: Int?
+    let aqiLevel: String?
+    /// 以 yyyymmdd 为键的逐日预报，覆盖今天起约 15 天。
+    let forecast: [Int: WeatherDay]
+
+    /// 百度的天气代号为拼音（如 yin、zhenyu_ye），映射为系统天气符号。
+    static func symbol(for iconKey: String) -> String {
+        let night = iconKey.hasSuffix("_ye")
+        let key = iconKey.replacingOccurrences(of: "_ye", with: "")
+        // “duoyun”里也含有“yu”，晴与多云必须先判断，否则会被当成雨。
+        if key.contains("qing") { return night ? "moon.stars.fill" : "sun.max.fill" }
+        if key.contains("duoyun") { return night ? "cloud.moon.fill" : "cloud.sun.fill" }
+        if key.contains("lei") { return "cloud.bolt.rain.fill" }
+        if key.contains("yujiaxue") || (key.contains("xue") && key.contains("yu")) { return "cloud.sleet.fill" }
+        if key.contains("xue") { return "cloud.snow.fill" }
+        if key.contains("baoyu") || key.contains("dayu") { return "cloud.heavyrain.fill" }
+        if key.contains("zhenyu") { return night ? "cloud.moon.rain.fill" : "cloud.sun.rain.fill" }
+        if key.contains("xiaoyu") { return "cloud.drizzle.fill" }
+        if key.contains("yu") { return "cloud.rain.fill" }
+        if key.contains("wu") { return "cloud.fog.fill" }
+        if key.contains("mai") { return "sun.haze.fill" }
+        if key.contains("sha") || key.contains("chen") { return "sun.dust.fill" }
+        return "cloud.fill"
+    }
+}
+
 /// 下一个法定假期；dayIndex 不为 nil 表示今天正处于该假期中的第几天。
 private struct HolidayInfo {
     let name: String
@@ -536,6 +575,7 @@ private struct CalendarWidgetEntry: TimelineEntry {
     let countdown: String
     let holiday: HolidayInfo?
     let workReminder: WorkReminder?
+    let weather: WeatherSnapshot?
     let appearance: ColorScheme?
 }
 
@@ -543,34 +583,55 @@ private struct CalendarWidgetProvider: TimelineProvider {
     private let model = WidgetCalendarModel.shared
 
     func placeholder(in context: Context) -> CalendarWidgetEntry {
-        makeEntry(for: Date(), days: [:])
+        makeEntry(for: Date(), days: [:], weather: nil)
     }
 
     func getSnapshot(in context: Context, completion: @escaping (CalendarWidgetEntry) -> Void) {
-        completion(makeEntry(for: Date(), days: CalendarDataStore.cachedDays()))
+        let now = Date()
+        completion(makeEntry(
+            for: now,
+            days: CalendarDataStore.cachedDays(),
+            weather: WeatherStore.cached(city: WidgetSettings.weatherCity, now: now)
+        ))
     }
 
     func getTimeline(
         in context: Context,
         completion: @escaping (Timeline<CalendarWidgetEntry>) -> Void
     ) {
-        let started = Date()
-        let now = Date()
-        let days = CalendarDataStore.cachedDays()
-        let calendar = Calendar.widgetGregorian
-        let startOfToday = calendar.startOfDay(for: now)
-        let nextDay = calendar.date(byAdding: .day, value: 1, to: startOfToday) ?? now.addingTimeInterval(86_400)
-        let refreshDate = min(nextDay, now.addingTimeInterval(CalendarDataStore.refreshInterval))
-        // 每个条目都要按多种外观各渲染一遍，只放一个条目以缩短点击后的渲染时间；跨天由到期刷新完成。
-        let entry = makeEntry(for: now, days: days)
-        completion(Timeline(entries: [entry], policy: .after(refreshDate)))
-        performanceLog.debug("timeline built in \(Int(Date().timeIntervalSince(started) * 1000)) ms")
-
-        // 先用缓存立即响应点击，联网更新放到后台，数据有变化时再刷新一次。
-        let displayed = entry.displayedMonth
-        let todayMonth = entry.today.monthStart
         Task {
-            let changed = await CalendarDataStore.refreshIfNeeded(
+            let started = Date()
+            let now = Date()
+            let city = WidgetSettings.weatherCity
+            let calendar = Calendar.widgetGregorian
+            let startOfToday = calendar.startOfDay(for: now)
+            let nextDay = calendar.date(byAdding: .day, value: 1, to: startOfToday) ?? now.addingTimeInterval(86_400)
+            let refreshDate = min(nextDay, now.addingTimeInterval(WeatherStore.refreshInterval))
+
+            // 扩展在返回时间线后很快被系统挂起，后台任务可能来不及完成，
+            // 因此完全没有可用数据时先等一次联网，之后各次点击都直接命中缓存。
+            var days = CalendarDataStore.cachedDays()
+            if days.isEmpty {
+                await CalendarDataStore.refreshIfNeeded(centers: [model.key(for: now).monthStart], now: now)
+                days = CalendarDataStore.cachedDays()
+            }
+            if WeatherStore.cached(city: city, now: now) == nil {
+                await WeatherStore.refreshIfNeeded(city: city, now: now)
+            }
+
+            // 每个条目都要按多种外观各渲染一遍，只放一个条目以缩短点击后的渲染时间；跨天由到期刷新完成。
+            let entry = makeEntry(
+                for: now,
+                days: days,
+                weather: WeatherStore.cached(city: city, now: now)
+            )
+            completion(Timeline(entries: [entry], policy: .after(refreshDate)))
+            performanceLog.debug("timeline built in \(Int(Date().timeIntervalSince(started) * 1000)) ms city=\(city, privacy: .public)")
+
+            // 已有缓存时立即响应点击，联网更新放到后台，数据有变化时再刷新一次。
+            let displayed = entry.displayedMonth
+            let todayMonth = entry.today.monthStart
+            async let calendarChanged = CalendarDataStore.refreshIfNeeded(
                 centers: [
                     todayMonth.addingMonths(1),
                     displayed,
@@ -579,13 +640,20 @@ private struct CalendarWidgetProvider: TimelineProvider {
                 ],
                 now: now
             )
-            if changed {
+            async let weatherChanged = WeatherStore.refreshIfNeeded(city: city, now: now)
+            let calendarDidChange = await calendarChanged
+            let weatherDidChange = await weatherChanged
+            if calendarDidChange || weatherDidChange {
                 WidgetCenter.shared.reloadTimelines(ofKind: CalendarWidgetConstants.kind)
             }
         }
     }
 
-    private func makeEntry(for date: Date, days: [WidgetDateKey: CalendarDay]) -> CalendarWidgetEntry {
+    private func makeEntry(
+        for date: Date,
+        days: [WidgetDateKey: CalendarDay],
+        weather: WeatherSnapshot?
+    ) -> CalendarWidgetEntry {
         let today = model.key(for: date)
         let state = CalendarWidgetState.snapshot(today: date)
         return CalendarWidgetEntry(
@@ -597,6 +665,7 @@ private struct CalendarWidgetProvider: TimelineProvider {
             countdown: model.countdown(today: today, days: days),
             holiday: model.holidayInfo(today: today, days: days),
             workReminder: model.workReminder(today: today, days: days),
+            weather: weather,
             appearance: CalendarWidgetState.appearance
         )
     }
@@ -724,7 +793,24 @@ private struct CalendarWidgetView: View {
                     almanacLine(tag: "宜", text: detail.suit, color: theme.holiday)
                     almanacLine(tag: "忌", text: detail.avoid, color: theme.workBadge)
                 }
-                Spacer(minLength: 0)
+                Spacer(minLength: 4)
+                if let weather = weatherLine(for: entry.selectedDate) {
+                    weatherLink {
+                        VStack(alignment: .trailing, spacing: 1) {
+                            HStack(spacing: 3) {
+                                weatherSymbol(weather.symbol, size: 12)
+                                Text(weather.current.map { "\($0)°" } ?? weather.condition)
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(theme.ink)
+                            }
+                            Text(weather.current == nil ? weather.range : "\(weather.condition) \(weather.range)")
+                                .font(.system(size: 8))
+                                .foregroundStyle(theme.mutedInk)
+                        }
+                        .lineLimit(1)
+                        .fixedSize()
+                    }
+                }
             }
             .frame(height: 34)
 
@@ -917,6 +1003,22 @@ private struct CalendarWidgetView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .padding(.top, 1)
+            if let weather = weatherLine(for: key) {
+                weatherLink {
+                    HStack(spacing: 3) {
+                        weatherSymbol(weather.symbol, size: 9)
+                        Text(weather.current.map { "\(weather.condition) \($0)°" } ?? weather.condition)
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundStyle(theme.ink)
+                        Text(weather.range)
+                            .font(.system(size: 8))
+                            .foregroundStyle(theme.mutedInk)
+                    }
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                }
+                .padding(.top, 3)
+            }
             Spacer(minLength: 3)
             almanacLine(tag: "宜", text: suit, color: theme.holiday)
             Spacer(minLength: 3)
@@ -1012,20 +1114,43 @@ private struct CalendarWidgetView: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(theme.mutedInk)
             }
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
-                Text("\(key.day)")
-                    .font(.system(size: 44, weight: .semibold))
-                    .foregroundStyle(isRedDay ? theme.holiday : theme.ink)
-                if let status {
-                    statusBadge(status, size: 10)
+            HStack(alignment: .center, spacing: 0) {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text("\(key.day)")
+                        .font(.system(size: 44, weight: .semibold))
+                        .foregroundStyle(isRedDay ? theme.holiday : theme.ink)
+                    if let status {
+                        statusBadge(status, size: 10)
+                    }
+                }
+                Spacer(minLength: 4)
+                if let weather = weatherLine(for: key) {
+                    weatherLink {
+                        VStack(alignment: .trailing, spacing: 1) {
+                            weatherSymbol(weather.symbol, size: 26)
+                                .frame(height: 28)
+                            Text("\(weather.current ?? 0)°")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(theme.ink)
+                        }
+                    }
                 }
             }
             .frame(height: 50)
-            Text(detail.hasFestival ? "\(detail.lunarTitle) · \(detail.festivals)" : detail.lunarTitle)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(theme.ink.opacity(0.85))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+            HStack(spacing: 4) {
+                Text(detail.hasFestival ? "\(detail.lunarTitle) · \(detail.festivals)" : detail.lunarTitle)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(theme.ink.opacity(0.85))
+                    .layoutPriority(1)
+                if let weather = weatherLine(for: key) {
+                    Spacer(minLength: 2)
+                    Text("\(weather.condition) \(weather.range)")
+                        .font(.system(size: 9))
+                        .foregroundStyle(theme.mutedInk)
+                }
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
             Spacer(minLength: 6)
             Rectangle()
                 .fill(theme.border)
@@ -1070,6 +1195,69 @@ private struct CalendarWidgetView: View {
             return ("\(info.name)假期", "第\(index)天 · 共\(info.length)天", true)
         }
         return ("\(info.name) 还有\(info.daysUntil)天", "放假\(info.length)天", false)
+    }
+
+    private struct WeatherLine {
+        let symbol: String
+        let condition: String
+        /// 仅今天有实况温度。
+        let current: Int?
+        let range: String
+    }
+
+    /// 今天显示实况，其余日期显示逐日预报；超出预报范围时返回 nil。
+    private func weatherLine(for key: WidgetDateKey) -> WeatherLine? {
+        guard let weather = entry.weather else {
+            return nil
+        }
+        let day = weather.forecast[key.number]
+        let range = day.map { "\($0.low)~\($0.high)°" } ?? ""
+        if key == entry.today {
+            return WeatherLine(
+                symbol: WeatherSnapshot.symbol(for: weather.iconKey),
+                condition: weather.condition,
+                current: weather.temperature,
+                range: range
+            )
+        }
+        guard let day else {
+            return nil
+        }
+        return WeatherLine(symbol: WeatherSnapshot.symbol(for: day.iconKey), condition: day.condition, current: nil, range: range)
+    }
+
+    @ViewBuilder
+    private func weatherLink<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        if let url = entry.weather?.pageURL {
+            Link(destination: url) { content() }
+                .buttonStyle(.plain)
+        } else {
+            content()
+        }
+    }
+
+    /// 系统多色模式下云朵固定为白色，浅色背景上看不清，因此按符号分层手动配色（各符号的分层顺序不同）。
+    private func weatherSymbol(_ name: String, size: CGFloat) -> some View {
+        let cloud = theme.mutedInk
+        let sun = Color(red: 1.0, green: 0.7, blue: 0.1)
+        let rain = Color(red: 0.25, green: 0.6, blue: 1.0)
+        let layers: (Color, Color, Color)
+        switch name {
+        case "sun.max.fill", "moon.stars.fill":
+            layers = (sun, sun, sun)
+        case "cloud.sun.fill", "cloud.moon.fill":
+            layers = (cloud, sun, sun)
+        case "cloud.sun.rain.fill", "cloud.moon.rain.fill":
+            layers = (cloud, sun, rain)
+        case "sun.haze.fill", "sun.dust.fill":
+            layers = (sun, cloud, cloud)
+        default:
+            layers = (cloud, rain, rain)
+        }
+        return Image(systemName: name)
+            .symbolRenderingMode(renderingMode == .fullColor ? .palette : .monochrome)
+            .foregroundStyle(layers.0, layers.1, layers.2)
+            .font(.system(size: size))
     }
 
     private func reminderText(_ reminder: WorkReminder) -> String {
@@ -1227,7 +1415,7 @@ struct DesktopCalendarWidget: Widget {
             CalendarWidgetView(entry: entry)
         }
         .configurationDisplayName("桌面日历")
-        .description("与百度日历同步的法定节假日与调休安排，点击日期可查看当日农历与宜忌。")
+        .description("与百度日历同步的法定节假日、调休安排与天气，点击日期可查看当日农历与宜忌。")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
         .contentMarginsDisabled()
         .containerBackgroundRemovable(false)

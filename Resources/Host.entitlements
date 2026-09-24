@@ -2,8 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>com.apple.security.app-sandbox</key>
-    <true/>
+    <!-- 宿主 App 需要把天气城市写入小组件扩展的数据目录，沙箱与 App Group（当前开发签名无法授权）都做不到，故关闭沙箱。小组件扩展仍在沙箱内。 -->
     <key>com.apple.security.network.client</key>
     <true/>
 </dict>

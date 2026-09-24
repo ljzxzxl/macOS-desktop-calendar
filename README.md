@@ -1,6 +1,6 @@
 # 桌面日历 · macOS Desktop Calendar
 
-一个原生 macOS WidgetKit 桌面小组件，把百度搜索里的“日历”卡片搬到桌面上：公历月视图、农历、二十四节气，以及与官方同步更新的法定节假日和调休安排。
+一个原生 macOS WidgetKit 桌面小组件，把百度搜索里的“日历”卡片搬到桌面上：公历月视图、农历、二十四节气、与官方同步更新的法定节假日和调休安排，以及天气。
 
 <p align="center">
   <img src="docs/desktop.jpg" alt="桌面整体效果" width="640">
@@ -26,6 +26,7 @@
 - 法定节假日及调休（休/班）标记，与百度日历同步；国务院公布新的放假安排后自动显示
 - 距离下一个法定假期的倒计时和放假天数
 - 补班提醒：补班前一天显示“明天补班”，补班当天显示“今天补班”
+- 天气：当前温度、天气图标与当日温区；中号、大号会跟随选中的日期显示未来 15 天内的预报，点击天气打开百度天气
 - 点击当月任意日期即可选中，在底部查看当日节日、农历、干支和宜忌
 - 左右箭头切换月份，“今天”按钮回到当前月份
 - 底部“网页”按钮可打开百度日历
@@ -101,8 +102,13 @@ open ~/Applications/DesktopCalendar.app
 2. 搜索“桌面日历”，选择中号或大号并添加。
 3. 拖动到合适的位置。
 
+## 天气城市
+
+打开应用，在引导窗口的“天气城市”里填写城市或区县名（例如 `武侯区`、`成都`、`北京`），按回车或点“保存”即可。留空则由天气接口按当前网络出口判断，若走公司代理可能定位到别的城市，此时手动填写即可。
+
 ## 数据说明
 
+- 天气数据来自百度天气（与 [百度搜索“天气”](https://www.baidu.com/s?wd=%E5%A4%A9%E6%B0%94) 同源），每 30 分钟在后台刷新一次并缓存；缓存超过 6 小时且取不到新数据时不显示天气。
 - 放假调休、节气、节日、农历干支与宜忌数据来自百度日历（与 [百度搜索“日历”](https://www.baidu.com/s?wd=%E6%97%A5%E5%8E%86) 同源）。小组件每 6 小时在后台刷新一次并缓存在本地，点击操作始终使用本地缓存，不等待网络。
 - 离线且没有缓存时，农历由 macOS 系统日历计算，不显示休/班标记。
 - 月份切换和选中的日期只在当天有效，跨天后自动回到今天。
@@ -115,7 +121,7 @@ open ~/Applications/DesktopCalendar.app
 | `Sources/CalendarData.swift` | 百度日历数据的拉取、解析与本地缓存 |
 | `Sources/CalendarWidget.swift` | 小组件时间线、视图和交互（App Intents） |
 | `Sources/WidgetHostMain.swift` | 宿主 App：承载小组件扩展，打开时显示引导窗口（检测是否已添加小组件、添加方法、检查更新） |
-| `Resources/` | Info.plist 与 entitlements（扩展需要网络权限） |
+| `Resources/` | Info.plist 与 entitlements |
 | `scripts/package-release.sh` | 构建通用架构版本并打包成用于发布的 DMG |
 | `scripts/render-app-icon.swift` | 用代码绘制应用图标，生成 `Resources/Assets.xcassets` 中的各尺寸图片 |
 
@@ -134,6 +140,14 @@ pluginkit -mAv | grep desktopcalendar
 ```
 
 如果出现多条记录，用 `pluginkit -r <路径>` 和 `lsregister -u <App 路径>` 移除多余的那份，再执行上面的 `killall chronod`。
+
+**小组件能显示，但点击切换月份、选日期等按钮都没有反应**
+
+按钮依赖系统的 App Intents 索引（`linkd`，按 bundle ID 登记）。注销或删除任何一份同 ID 的副本（旧 DMG 卷、构建目录等）时，系统可能把已安装版本的索引一并清掉。重新登记已安装的应用即可恢复：
+
+```bash
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f -R -trusted /Applications/DesktopCalendar.app
+```
 
 **点击后要约半秒才有变化**
 

@@ -4,6 +4,31 @@ import WidgetKit
 
 private enum HostConstants {
     static let widgetKind = "com.allen.desktopcalendar.widget"
+    /// 小组件扩展容器内的设置文件；扩展侧读取逻辑见 CalendarData.swift 的 WidgetSettings。
+    static var settingsURL: URL {
+        URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent("Library/Containers/\(widgetKind)/Data/Library/Application Support/DesktopCalendar", isDirectory: true)
+            .appendingPathComponent("settings.json")
+    }
+
+    static func readWeatherCity() -> String {
+        guard
+            let data = try? Data(contentsOf: settingsURL),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let city = json["weatherCity"] as? String
+        else {
+            return ""
+        }
+        return city
+    }
+
+    static func writeWeatherCity(_ city: String) {
+        let url = settingsURL
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let data = try? JSONSerialization.data(withJSONObject: ["weatherCity": city]) {
+            try? data.write(to: url, options: .atomic)
+        }
+    }
     static let readmeURL = URL(string: "https://github.com/ljzxzxl/macOS-desktop-calendar#readme")!
     static let latestReleaseAPI = URL(string: "https://api.github.com/repos/ljzxzxl/macOS-desktop-calendar/releases/latest")!
 
@@ -30,6 +55,7 @@ private final class GuideModel: ObservableObject {
     @Published var addedFamilies: [WidgetFamily]?
     @Published var updateState: UpdateState = .checking
     @Published var refreshed = false
+    @Published var weatherCity = HostConstants.readWeatherCity()
 
     let isTranslocated = Bundle.main.bundlePath.contains("/AppTranslocation/")
     private var pollTask: Task<Void, Never>?
@@ -51,6 +77,14 @@ private final class GuideModel: ObservableObject {
 
     func stop() {
         pollTask?.cancel()
+    }
+
+    /// 城市留空则由天气接口按出口 IP 判断。
+    func saveWeatherCity() {
+        let city = weatherCity.trimmingCharacters(in: .whitespacesAndNewlines)
+        weatherCity = city
+        HostConstants.writeWeatherCity(city)
+        WidgetCenter.shared.reloadTimelines(ofKind: HostConstants.widgetKind)
     }
 
     func refreshWidgets() {
@@ -137,6 +171,7 @@ private struct GuideView: View {
             } else {
                 statusCard
                 steps
+                weatherRow
                 updateRow
             }
 
@@ -236,6 +271,32 @@ private struct GuideView: View {
             Text(text)
                 .font(.system(size: 13))
         }
+    }
+
+    private var weatherRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "cloud.sun.fill")
+                .foregroundStyle(.secondary)
+            Text("天气城市")
+                .font(.system(size: 12))
+            TextField("自动", text: $model.weatherCity)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 12))
+                .frame(width: 110)
+                .onSubmit { model.saveWeatherCity() }
+            Text("留空自动判断")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+            Button("保存") {
+                model.saveWeatherCity()
+            }
+            .buttonStyle(.link)
+            .font(.system(size: 12))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private var updateRow: some View {
