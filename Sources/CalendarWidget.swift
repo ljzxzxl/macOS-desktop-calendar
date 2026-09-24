@@ -26,6 +26,8 @@ private struct WidgetTheme {
     let infoBackground: Color
     let infoBorder: Color
     let appearanceIcon: Color
+    /// 实心标签（休、班、宜、忌、今天）上的文字颜色。
+    let onBadge: Color
     let todayFill: Color
     let restFill: Color
     let outsideMonthOpacity: Double
@@ -50,6 +52,7 @@ private struct WidgetTheme {
         infoBackground: Color.blue.opacity(0.06),
         infoBorder: Color.blue.opacity(0.20),
         appearanceIcon: Color(red: 0.38, green: 0.42, blue: 0.86),
+        onBadge: .white,
         todayFill: Color(red: 0.29, green: 0.43, blue: 0.88).opacity(0.10),
         restFill: Color.red.opacity(0.06),
         outsideMonthOpacity: 0.28
@@ -75,13 +78,45 @@ private struct WidgetTheme {
         infoBackground: Color(red: 0.35, green: 0.55, blue: 1.00).opacity(0.18),
         infoBorder: Color(red: 0.52, green: 0.70, blue: 1.00).opacity(0.30),
         appearanceIcon: Color(red: 1.00, green: 0.78, blue: 0.30),
+        onBadge: .white,
         todayFill: Color(red: 0.49, green: 0.62, blue: 1.00).opacity(0.20),
         restFill: Color(red: 1.00, green: 0.35, blue: 0.33).opacity(0.14),
         outsideMonthOpacity: 0.35
     )
 
-    static func resolve(_ colorScheme: ColorScheme) -> WidgetTheme {
-        colorScheme == .dark ? dark : light
+    /// 桌面被窗口遮挡等情况下，系统会去掉背景并按亮度决定透明度来单色显示组件：
+    /// 颜色只保留明暗，纯黑会变成镂空，所以这里只用白色的不同透明度，标签文字用黑色。
+    static let monochrome = WidgetTheme(
+        background: .clear,
+        border: Color.white.opacity(0.18),
+        ink: .white,
+        mutedInk: Color.white.opacity(0.60),
+        accent: .white,
+        selection: .white,
+        holiday: .white,
+        workBadge: Color.white.opacity(0.55),
+        headerBackground: Color.white.opacity(0.08),
+        headerBorder: Color.white.opacity(0.14),
+        tagText: .white,
+        tagBackground: Color.white.opacity(0.18),
+        controlBackground: Color.white.opacity(0.10),
+        controlBorder: Color.white.opacity(0.20),
+        panelBackground: Color.white.opacity(0.08),
+        infoText: .white,
+        infoBackground: Color.white.opacity(0.16),
+        infoBorder: Color.white.opacity(0.30),
+        appearanceIcon: .white,
+        onBadge: .black,
+        todayFill: Color.white.opacity(0.28),
+        restFill: Color.white.opacity(0.14),
+        outsideMonthOpacity: 0.35
+    )
+
+    static func resolve(_ colorScheme: ColorScheme, renderingMode: WidgetRenderingMode) -> WidgetTheme {
+        guard renderingMode == .fullColor else {
+            return monochrome
+        }
+        return colorScheme == .dark ? dark : light
     }
 }
 
@@ -264,6 +299,18 @@ private struct HolidayInfo {
     let dayIndex: Int?
 }
 
+private enum WorkReminder: Equatable {
+    case today
+    case tomorrow(weekday: String)
+
+    var title: String {
+        switch self {
+        case .today: return "今天补班"
+        case .tomorrow: return "明天补班"
+        }
+    }
+}
+
 private struct DayDetail {
     let dateTitle: String
     /// 例如“9月 · 周四 · 今天”，用于中号左侧详情。
@@ -384,6 +431,17 @@ private struct WidgetCalendarModel {
         return "距离 \(info.year)年\(info.name) 还有\(info.daysUntil)天 · 放假\(info.length)天"
     }
 
+    func workReminder(today: WidgetDateKey, days: [WidgetDateKey: CalendarDay]) -> WorkReminder? {
+        if days[today]?.status == .work {
+            return .today
+        }
+        let tomorrow = shifted(today, by: 1)
+        if days[tomorrow]?.status == .work {
+            return .tomorrow(weekday: shortWeekdayName(for: tomorrow))
+        }
+        return nil
+    }
+
     func holidayInfo(today: WidgetDateKey, days: [WidgetDateKey: CalendarDay]) -> HolidayInfo? {
         guard let first = days.values
             .filter({ $0.key >= today && $0.status == .rest })
@@ -477,6 +535,7 @@ private struct CalendarWidgetEntry: TimelineEntry {
     let days: [WidgetDateKey: CalendarDay]
     let countdown: String
     let holiday: HolidayInfo?
+    let workReminder: WorkReminder?
     let appearance: ColorScheme?
 }
 
@@ -537,6 +596,7 @@ private struct CalendarWidgetProvider: TimelineProvider {
             days: days,
             countdown: model.countdown(today: today, days: days),
             holiday: model.holidayInfo(today: today, days: days),
+            workReminder: model.workReminder(today: today, days: days),
             appearance: CalendarWidgetState.appearance
         )
     }
@@ -546,6 +606,7 @@ private struct CalendarWidgetView: View {
     let entry: CalendarWidgetEntry
     @Environment(\.widgetFamily) private var family
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.widgetRenderingMode) private var renderingMode
 
     private let model = WidgetCalendarModel.shared
     private let weekdayNames = ["一", "二", "三", "四", "五", "六", "日"]
@@ -556,7 +617,7 @@ private struct CalendarWidgetView: View {
     }
 
     private var theme: WidgetTheme {
-        .resolve(effectiveScheme)
+        .resolve(effectiveScheme, renderingMode: renderingMode)
     }
 
     var body: some View {
@@ -584,9 +645,10 @@ private struct CalendarWidgetView: View {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(theme.background)
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .clipShape(ContainerRelativeShape())
             .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                ContainerRelativeShape()
+                    .inset(by: 0.5)
                     .stroke(theme.border, lineWidth: 1)
             )
     }
@@ -691,7 +753,12 @@ private struct CalendarWidgetView: View {
 
     private func header(year: Int, month: Int) -> some View {
         HStack(spacing: 3) {
-            headerTag("假期")
+            if let reminder = entry.workReminder {
+                headerTag(reminder.title, textColor: theme.onBadge, background: theme.workBadge)
+            } else {
+                headerTag("假期", textColor: theme.tagText, background: theme.tagBackground)
+                    .widgetAccentable()
+            }
             Spacer(minLength: 1)
             monthNavigator(year: year, month: month)
             Spacer(minLength: 1)
@@ -707,13 +774,13 @@ private struct CalendarWidgetView: View {
         )
     }
 
-    private func headerTag(_ title: String) -> some View {
+    private func headerTag(_ title: String, textColor: Color, background: Color) -> some View {
         Text(verbatim: title)
             .font(.system(size: 9, weight: .medium))
-            .foregroundStyle(theme.tagText)
+            .foregroundStyle(textColor)
             .padding(.horizontal, 5)
             .frame(height: 20)
-            .background(theme.tagBackground)
+            .background(background)
             .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
     }
 
@@ -749,6 +816,7 @@ private struct CalendarWidgetView: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(numberColor.opacity(fadedOpacity))
                 .frame(maxWidth: .infinity)
+                .widgetAccentable(status == .rest)
             Text(label)
                 .font(.system(size: 8, weight: .regular))
                 .lineLimit(1)
@@ -776,13 +844,14 @@ private struct CalendarWidgetView: View {
             if let status {
                 Text(status == .rest ? "休" : "班")
                     .font(.system(size: 6, weight: .medium))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(theme.onBadge)
                     .padding(.horizontal, 2)
                     .padding(.vertical, 1)
                     .background(status == .rest ? theme.holiday : theme.workBadge)
                     .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
                     .opacity(inCurrentMonth ? 1 : 0.5)
                     .offset(x: 2, y: -2)
+                    .widgetAccentable(status == .rest)
             }
         }
         .contentShape(Rectangle())
@@ -851,11 +920,22 @@ private struct CalendarWidgetView: View {
             Spacer(minLength: 3)
             almanacLine(tag: "宜", text: suit, color: theme.holiday)
             Spacer(minLength: 3)
-            Text("\(summary.title) · \(summary.subtitle)")
-                .font(.system(size: 8, weight: .medium))
-                .foregroundStyle(theme.ink.opacity(0.72))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+            if let reminder = entry.workReminder {
+                HStack(spacing: 4) {
+                    statusBadge(.work, size: 8)
+                    Text(reminderText(reminder))
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(theme.ink)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+            } else {
+                Text("\(summary.title) · \(summary.subtitle)")
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundStyle(theme.ink.opacity(0.72))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
             HStack(spacing: 4) {
                 appearanceToggle
                 webLink
@@ -886,7 +966,7 @@ private struct CalendarWidgetView: View {
         let isSelected = key == entry.selectedDate
         let isRedDay = status == .rest || (status != .work && model.isWeekend(key))
         let fadedOpacity = inCurrentMonth ? 1.0 : theme.outsideMonthOpacity
-        let numberColor: Color = isToday ? .white : (isRedDay ? theme.holiday : theme.ink)
+        let numberColor: Color = isToday ? theme.onBadge : (isRedDay ? theme.holiday : theme.ink)
         let fill: Color? = isToday
             ? theme.accent
             : (status == .rest ? theme.holiday.opacity(0.16) : (status == .work ? theme.workBadge.opacity(0.20) : nil))
@@ -908,6 +988,7 @@ private struct CalendarWidgetView: View {
                         .stroke(theme.selection, lineWidth: 1.2)
                 }
             }
+            .widgetAccentable(status == .rest && !isToday)
             .contentShape(Rectangle())
 
         return selectable(cell, key: key, enabled: inCurrentMonth)
@@ -957,13 +1038,15 @@ private struct CalendarWidgetView: View {
 
     private func smallFooter(status: HolidayStatus?) -> some View {
         let summary = holidaySummary
-        let isWorkDay = status == .work && summary.isOngoing == false
-        let title = isWorkDay ? "今天补班" : summary.title
+        let reminder = entry.workReminder
+        let isWorkDay = reminder != nil
+        let title = reminder?.title ?? summary.title
         let subtitle = isWorkDay ? summary.title : summary.subtitle
         return HStack(spacing: 6) {
             RoundedRectangle(cornerRadius: 1.5, style: .continuous)
                 .fill(isWorkDay ? theme.workBadge : theme.holiday)
                 .frame(width: 3, height: 26)
+                .widgetAccentable(!isWorkDay)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
                     .font(.system(size: 11, weight: .semibold))
@@ -989,16 +1072,24 @@ private struct CalendarWidgetView: View {
         return ("\(info.name) 还有\(info.daysUntil)天", "放假\(info.length)天", false)
     }
 
+    private func reminderText(_ reminder: WorkReminder) -> String {
+        switch reminder {
+        case .today: return "今天补班，记得上班"
+        case .tomorrow(let weekday): return "明天\(weekday)补班"
+        }
+    }
+
     private func statusBadge(_ status: HolidayStatus, size: CGFloat) -> some View {
         Text(status == .rest ? "休" : "班")
             .font(.system(size: size, weight: .medium))
-            .foregroundStyle(.white)
+            .foregroundStyle(theme.onBadge)
             .padding(.horizontal, size * 0.35)
             .padding(.vertical, size * 0.15)
             .background(
                 status == .rest ? theme.holiday : theme.workBadge,
                 in: RoundedRectangle(cornerRadius: 3, style: .continuous)
             )
+            .widgetAccentable(status == .rest)
     }
 
     /// 每个按钮都会显著增加点击后的渲染时间，淡灰色的上下月日期不做成按钮。
@@ -1016,7 +1107,7 @@ private struct CalendarWidgetView: View {
         HStack(spacing: 3) {
             Text(tag)
                 .font(.system(size: 7, weight: .medium))
-                .foregroundStyle(.white)
+                .foregroundStyle(theme.onBadge)
                 .frame(width: 13, height: 13)
                 .background(color)
                 .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
