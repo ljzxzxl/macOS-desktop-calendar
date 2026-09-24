@@ -6,12 +6,80 @@ import os
 
 private let performanceLog = Logger(subsystem: "com.allen.desktopcalendar.widget", category: "performance")
 
-private enum WidgetPalette {
-    static let ink = Color(red: 0.15, green: 0.17, blue: 0.20)
-    static let mutedInk = Color(red: 0.40, green: 0.43, blue: 0.47)
-    static let accent = Color(red: 0.29, green: 0.43, blue: 0.88)
-    static let selection = Color(red: 0.32, green: 0.46, blue: 0.91)
-    static let holiday = Color.red.opacity(0.88)
+private struct WidgetTheme {
+    let background: Color
+    let border: Color
+    let ink: Color
+    let mutedInk: Color
+    let accent: Color
+    let selection: Color
+    let holiday: Color
+    let workBadge: Color
+    let headerBackground: Color
+    let headerBorder: Color
+    let tagText: Color
+    let tagBackground: Color
+    let controlBackground: Color
+    let controlBorder: Color
+    let panelBackground: Color
+    let infoText: Color
+    let infoBackground: Color
+    let infoBorder: Color
+    let todayFill: Color
+    let restFill: Color
+    let outsideMonthOpacity: Double
+
+    static let light = WidgetTheme(
+        background: .white,
+        border: Color(red: 0.85, green: 0.89, blue: 0.91),
+        ink: Color(red: 0.15, green: 0.17, blue: 0.20),
+        mutedInk: Color(red: 0.40, green: 0.43, blue: 0.47),
+        accent: Color(red: 0.29, green: 0.43, blue: 0.88),
+        selection: Color(red: 0.32, green: 0.46, blue: 0.91),
+        holiday: Color.red.opacity(0.88),
+        workBadge: .gray,
+        headerBackground: Color(red: 0.93, green: 0.97, blue: 0.99),
+        headerBorder: Color(red: 0.82, green: 0.88, blue: 0.92),
+        tagText: Color(red: 0.78, green: 0.22, blue: 0.20),
+        tagBackground: Color.red.opacity(0.07),
+        controlBackground: Color.white.opacity(0.94),
+        controlBorder: Color(red: 0.83, green: 0.87, blue: 0.90),
+        panelBackground: Color(red: 0.97, green: 0.97, blue: 0.99),
+        infoText: Color.blue.opacity(0.84),
+        infoBackground: Color.blue.opacity(0.06),
+        infoBorder: Color.blue.opacity(0.20),
+        todayFill: Color(red: 0.29, green: 0.43, blue: 0.88).opacity(0.10),
+        restFill: Color.red.opacity(0.06),
+        outsideMonthOpacity: 0.28
+    )
+
+    static let dark = WidgetTheme(
+        background: Color(red: 0.12, green: 0.12, blue: 0.13),
+        border: Color.white.opacity(0.10),
+        ink: Color(red: 0.92, green: 0.93, blue: 0.95),
+        mutedInk: Color(red: 0.60, green: 0.63, blue: 0.68),
+        accent: Color(red: 0.49, green: 0.62, blue: 1.00),
+        selection: Color(red: 0.52, green: 0.65, blue: 1.00),
+        holiday: Color(red: 1.00, green: 0.43, blue: 0.41),
+        workBadge: Color(red: 0.45, green: 0.47, blue: 0.51),
+        headerBackground: Color(red: 0.16, green: 0.19, blue: 0.23),
+        headerBorder: Color.white.opacity(0.08),
+        tagText: Color(red: 1.00, green: 0.52, blue: 0.49),
+        tagBackground: Color.red.opacity(0.18),
+        controlBackground: Color.white.opacity(0.08),
+        controlBorder: Color.white.opacity(0.12),
+        panelBackground: Color(red: 0.16, green: 0.16, blue: 0.18),
+        infoText: Color(red: 0.52, green: 0.70, blue: 1.00),
+        infoBackground: Color(red: 0.35, green: 0.55, blue: 1.00).opacity(0.18),
+        infoBorder: Color(red: 0.52, green: 0.70, blue: 1.00).opacity(0.30),
+        todayFill: Color(red: 0.49, green: 0.62, blue: 1.00).opacity(0.20),
+        restFill: Color(red: 1.00, green: 0.35, blue: 0.33).opacity(0.14),
+        outsideMonthOpacity: 0.35
+    )
+
+    static func resolve(_ colorScheme: ColorScheme) -> WidgetTheme {
+        colorScheme == .dark ? dark : light
+    }
 }
 
 private enum CalendarWidgetConstants {
@@ -391,15 +459,19 @@ private struct CalendarWidgetProvider: TimelineProvider {
 private struct CalendarWidgetView: View {
     let entry: CalendarWidgetEntry
     @Environment(\.widgetFamily) private var family
+    @Environment(\.colorScheme) private var colorScheme
 
     private let model = WidgetCalendarModel.shared
     private let weekdayNames = ["一", "二", "三", "四", "五", "六", "日"]
 
+    private var theme: WidgetTheme {
+        .resolve(colorScheme)
+    }
+
     var body: some View {
         content
-        .environment(\.colorScheme, .light)
         .containerBackground(for: .widget) {
-            Color.white
+            theme.background
         }
     }
 
@@ -431,11 +503,11 @@ private struct CalendarWidgetView: View {
         .padding(.horizontal, compact ? 6 : 10)
         .padding(.top, compact ? 12 : 16)
         .padding(.bottom, compact ? 0 : 4)
-        .background(Color.white)
+        .background(theme.background)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color(red: 0.85, green: 0.89, blue: 0.91), lineWidth: 1)
+                .stroke(theme.border, lineWidth: 1)
         )
         .overlay(alignment: .bottomTrailing) {
             if family == .systemMedium {
@@ -456,20 +528,20 @@ private struct CalendarWidgetView: View {
             HStack(spacing: 5) {
                 Text("节日百科")
                     .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(Color.blue.opacity(0.82))
+                    .foregroundStyle(theme.infoText)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
-                    .background(Color.blue.opacity(0.06))
+                    .background(theme.infoBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
                 Text(detail.festivals)
                     .font(.system(size: 9))
-                    .foregroundStyle(WidgetPalette.ink.opacity(0.82))
+                    .foregroundStyle(theme.ink.opacity(0.82))
                     .lineLimit(1)
                     .minimumScaleFactor(0.65)
                 Spacer(minLength: 4)
                 Text(detail.dateTitle)
                     .font(.system(size: 8))
-                    .foregroundStyle(WidgetPalette.mutedInk)
+                    .foregroundStyle(theme.mutedInk)
                     .lineLimit(1)
                     .fixedSize()
             }
@@ -481,20 +553,20 @@ private struct CalendarWidgetView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(detail.lunarTitle)
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(WidgetPalette.ink)
+                        .foregroundStyle(theme.ink)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                     Text(detail.ganzhi)
                         .font(.system(size: 8, weight: .medium))
-                        .foregroundStyle(WidgetPalette.mutedInk)
+                        .foregroundStyle(theme.mutedInk)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                 }
                 .frame(width: 84, alignment: .leading)
 
                 VStack(alignment: .leading, spacing: 1) {
-                    almanacLine(tag: "宜", text: detail.suit, color: .red)
-                    almanacLine(tag: "忌", text: detail.avoid, color: .gray)
+                    almanacLine(tag: "宜", text: detail.suit, color: theme.holiday)
+                    almanacLine(tag: "忌", text: detail.avoid, color: theme.workBadge)
                 }
                 Spacer(minLength: 0)
             }
@@ -512,13 +584,13 @@ private struct CalendarWidgetView: View {
                 Spacer(minLength: 0)
                 webLink(compact: true)
             }
-            .foregroundStyle(WidgetPalette.ink.opacity(0.72))
+            .foregroundStyle(theme.ink.opacity(0.72))
             .frame(height: 18)
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 4)
         .frame(height: 80)
-        .background(Color(red: 0.97, green: 0.97, blue: 0.99))
+        .background(theme.panelBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
@@ -534,7 +606,7 @@ private struct CalendarWidgetView: View {
                 .font(.system(size: 8))
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
-                .foregroundStyle(WidgetPalette.ink.opacity(0.78))
+                .foregroundStyle(theme.ink.opacity(0.78))
         }
     }
 
@@ -564,28 +636,28 @@ private struct CalendarWidgetView: View {
         }
         .padding(.horizontal, compact ? 2 : 4)
         .padding(.vertical, compact ? 3 : 7)
-        .background(Color(red: 0.93, green: 0.97, blue: 0.99))
+        .background(theme.headerBackground)
         .clipShape(RoundedRectangle(cornerRadius: compact ? 8 : 12, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: compact ? 8 : 12, style: .continuous)
-                .stroke(Color(red: 0.82, green: 0.88, blue: 0.92), lineWidth: 0.75)
+                .stroke(theme.headerBorder, lineWidth: 0.75)
         )
     }
 
     private func headerTag(_ title: String, compact: Bool) -> some View {
         Text(verbatim: title)
             .font(.system(size: compact ? 9 : 12, weight: .medium))
-            .foregroundStyle(Color(red: 0.78, green: 0.22, blue: 0.20))
+            .foregroundStyle(theme.tagText)
             .padding(.horizontal, compact ? 5 : 8)
             .frame(height: compact ? 20 : 30)
-            .background(Color.red.opacity(0.07))
+            .background(theme.tagBackground)
             .clipShape(RoundedRectangle(cornerRadius: compact ? 5 : 7, style: .continuous))
     }
 
     private func headerTitle(year: Int, month: Int, compact: Bool) -> some View {
         Text(verbatim: "\(year)年 \(month)月")
             .font(.system(size: compact ? 11 : 14, weight: .semibold))
-            .foregroundStyle(WidgetPalette.ink)
+            .foregroundStyle(theme.ink)
             .lineLimit(1)
             .minimumScaleFactor(0.8)
             .frame(minWidth: compact ? 74 : 96)
@@ -601,13 +673,13 @@ private struct CalendarWidgetView: View {
         Button(intent: intent) {
             Image(systemName: systemName)
                 .font(.system(size: compact ? 8 : 10, weight: .semibold))
-                .foregroundStyle(WidgetPalette.mutedInk)
+                .foregroundStyle(theme.mutedInk)
                 .frame(width: compact ? 20 : 26, height: compact ? 20 : 30)
-                .background(Color.white.opacity(0.86))
+                .background(theme.controlBackground)
                 .clipShape(RoundedRectangle(cornerRadius: compact ? 5 : 7, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: compact ? 5 : 7, style: .continuous)
-                        .stroke(Color(red: 0.84, green: 0.88, blue: 0.91), lineWidth: 0.7)
+                        .stroke(theme.controlBorder, lineWidth: 0.7)
                 )
         }
         .buttonStyle(.plain)
@@ -618,14 +690,14 @@ private struct CalendarWidgetView: View {
         Button(intent: TodayIntent()) {
             Text("今天")
                 .font(.system(size: compact ? 10 : 13, weight: .medium))
-                .foregroundStyle(WidgetPalette.ink)
+                .foregroundStyle(theme.ink)
                 .padding(.horizontal, compact ? 6 : 9)
                 .frame(height: compact ? 20 : 30)
-                .background(Color.white.opacity(0.98))
+                .background(theme.controlBackground)
                 .clipShape(RoundedRectangle(cornerRadius: compact ? 5 : 7, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: compact ? 5 : 7, style: .continuous)
-                        .stroke(Color(red: 0.82, green: 0.86, blue: 0.89), lineWidth: 0.7)
+                        .stroke(theme.controlBorder, lineWidth: 0.7)
                 )
         }
         .buttonStyle(.plain)
@@ -637,7 +709,7 @@ private struct CalendarWidgetView: View {
             ForEach(Array(weekdayNames.enumerated()), id: \.offset) { index, weekday in
                 Text(weekday)
                     .font(.system(size: compact ? 9 : 12, weight: .medium))
-                    .foregroundStyle(index >= 5 ? WidgetPalette.holiday : WidgetPalette.mutedInk)
+                    .foregroundStyle(index >= 5 ? theme.holiday : theme.mutedInk)
                     .frame(maxWidth: .infinity)
             }
         }
@@ -661,18 +733,19 @@ private struct CalendarWidgetView: View {
     }
 
     private func dayCell(key: WidgetDateKey, month: WidgetDateKey, compact: Bool) -> some View {
+        let theme = self.theme
         let day = entry.days[key]
         let status = day?.status
         let inCurrentMonth = key.year == month.year && key.month == month.month
         let isToday = key == entry.today
         let isSelected = key == entry.selectedDate
         let isRedDay = status == .rest || (status != .work && model.isWeekend(key))
-        let numberColor = isToday ? WidgetPalette.accent : (isRedDay ? WidgetPalette.holiday : WidgetPalette.ink)
-        let fadedOpacity = inCurrentMonth ? 1.0 : 0.28
+        let numberColor = isToday ? theme.accent : (isRedDay ? theme.holiday : theme.ink)
+        let fadedOpacity = inCurrentMonth ? 1.0 : theme.outsideMonthOpacity
         let label = model.dayLabel(for: key, day: day)
         let fill: Color? = isToday
-            ? WidgetPalette.accent.opacity(0.10)
-            : (status == .rest ? Color.red.opacity(0.06) : nil)
+            ? theme.todayFill
+            : (status == .rest ? theme.restFill : nil)
 
         let cell = VStack(spacing: 1) {
             Text("\(key.day)")
@@ -684,7 +757,7 @@ private struct CalendarWidgetView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(label.count > 4 ? 0.65 : 1)
                 .foregroundStyle(
-                    (status == .rest || isToday ? numberColor : WidgetPalette.mutedInk)
+                    (status == .rest || isToday ? numberColor : theme.mutedInk)
                         .opacity(fadedOpacity)
                 )
                 .frame(maxWidth: .infinity)
@@ -699,7 +772,7 @@ private struct CalendarWidgetView: View {
         .overlay {
             if isSelected {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(WidgetPalette.selection, lineWidth: 1.5)
+                    .stroke(theme.selection, lineWidth: 1.5)
             }
         }
         .overlay(alignment: .topTrailing) {
@@ -709,7 +782,7 @@ private struct CalendarWidgetView: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, compact ? 2 : 3)
                     .padding(.vertical, compact ? 1 : 2)
-                    .background(status == .rest ? WidgetPalette.holiday : Color.gray)
+                    .background(status == .rest ? theme.holiday : theme.workBadge)
                     .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
                     .opacity(inCurrentMonth ? 1 : 0.5)
                     .offset(x: 2, y: -2)
@@ -735,14 +808,14 @@ private struct CalendarWidgetView: View {
                 Image(systemName: "arrow.up.right.square")
             }
             .font(.system(size: compact ? 8 : 10, weight: .medium))
-            .foregroundStyle(Color.blue.opacity(0.86))
+            .foregroundStyle(theme.infoText)
             .padding(.horizontal, compact ? 5 : 7)
             .frame(height: compact ? 16 : 20)
-            .background(Color.white.opacity(0.94))
+            .background(theme.controlBackground)
             .clipShape(RoundedRectangle(cornerRadius: compact ? 4 : 5, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: compact ? 4 : 5, style: .continuous)
-                    .stroke(Color.blue.opacity(0.20), lineWidth: 0.7)
+                    .stroke(theme.infoBorder, lineWidth: 0.7)
             )
         }
         .buttonStyle(.plain)

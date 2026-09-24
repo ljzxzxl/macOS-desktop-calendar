@@ -19,9 +19,9 @@
         <string>MacOSX</string>
     </array>
     <key>CFBundleShortVersionString</key>
-    <string>2.2.4</string>
+    <string>2.3.0</string>
     <key>CFBundleVersion</key>
-    <string>16</string>
+    <string>17</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSExtension</key>
@@ -29,7 +29,5 @@
         <key>NSExtensionPointIdentifier</key>
         <string>com.apple.widgetkit-extension</string>
     </dict>
-    <key>NSWidgetBackgroundColorName</key>
-    <string>WidgetBackgroundColor</string>
 </dict>
 </plist>
