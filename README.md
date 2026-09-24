@@ -44,7 +44,7 @@
      xattr -dr com.apple.quarantine /Applications/DesktopCalendar.app
      ```
    - 或者先双击打开一次，出现拦截提示后，到“系统设置 → 隐私与安全性”，在页面底部点“仍要打开”。
-4. 打开后会弹出“桌面日历已安装”的提示。本应用没有窗口，之后无需再打开。
+4. 打开后会显示引导窗口，告诉你小组件是否已经添加到桌面，并列出添加方法。之后随时点应用图标都可以再次查看。窗口打开时会自动检查更新，也可以点“检查更新”或在菜单中选择“检查更新…”手动检查，有新版本时可直接前往下载。关闭窗口后应用自动退出，小组件不受影响。
 5. 在桌面空白处右键，选择“编辑小组件…”，搜索“桌面日历”，把中号或大号组件拖到桌面。
 
 更新时下载新版 DMG，覆盖「应用程序」里的旧版，重复第 3 步后打开一次即可。如果桌面上的组件没有变化，执行一次 `killall chronod`。
@@ -110,7 +110,7 @@ open ~/Applications/DesktopCalendar.app
 | --- | --- |
 | `Sources/CalendarData.swift` | 百度日历数据的拉取、解析与本地缓存 |
 | `Sources/CalendarWidget.swift` | 小组件时间线、视图和交互（App Intents） |
-| `Sources/WidgetHostMain.swift` | 无界面的宿主 App，负责承载扩展、在启动时刷新小组件，并在首次打开时给出安装提示 |
+| `Sources/WidgetHostMain.swift` | 宿主 App：承载小组件扩展，打开时显示引导窗口（检测是否已添加小组件、添加方法、检查更新） |
 | `Resources/` | Info.plist 与 entitlements（扩展需要网络权限） |
 | `scripts/package-release.sh` | 构建通用架构版本并打包成用于发布的 DMG |
 | `scripts/render-app-icon.swift` | 用代码绘制应用图标，生成 `Resources/Assets.xcassets` 中的各尺寸图片 |

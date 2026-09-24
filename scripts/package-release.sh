@@ -41,6 +41,8 @@ ditto "$APP" "$STAGING/DesktopCalendar.app"
 ln -s /Applications "$STAGING/Applications"
 hdiutil create -volname "DesktopCalendar $VERSION" -srcfolder "$STAGING" -fs HFS+ -format UDZO -ov "$DMG" >/dev/null
 rm -rf "$STAGING"
+# 构建产物即使注销过也可能被系统重新登记为组件来源，打包后直接删除。
+rm -rf "$APP"
 
 echo "==> 完成"
 echo "$DMG"
