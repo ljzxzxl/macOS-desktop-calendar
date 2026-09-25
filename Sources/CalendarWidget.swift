@@ -735,11 +735,9 @@ private struct CalendarWidgetView: View {
             calendarGrid(days: model.visibleDays(for: month), month: month)
                 .padding(.horizontal, 4)
                 .padding(.top, 2)
-                .invalidatableContent()
             largeDetails
                 .padding(.horizontal, 4)
                 .padding(.top, 4)
-                .invalidatableContent()
         }
         .padding(.horizontal, 6)
         .padding(.top, 12)
@@ -995,7 +993,6 @@ private struct CalendarWidgetView: View {
         return HStack(spacing: 10) {
             mediumDetailPanel
                 .frame(width: 108)
-                .invalidatableContent()
             VStack(spacing: 0) {
                 HStack(spacing: 3) {
                     monthNavigator(year: month.year, month: month.month)
@@ -1008,7 +1005,6 @@ private struct CalendarWidgetView: View {
                     .padding(.top, 3)
                 miniGrid(days: model.visibleDays(for: month), month: month)
                     .padding(.top, 2)
-                    .invalidatableContent()
             }
         }
         .padding(.horizontal, 12)
@@ -1358,7 +1354,6 @@ private struct CalendarWidgetView: View {
                 .minimumScaleFactor(0.8)
                 .frame(minWidth: 74)
                 .frame(height: 20)
-                .invalidatableContent()
             headerArrow("chevron.right", help: "下一个月", intent: NextMonthIntent())
         }
     }
