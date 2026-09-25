@@ -882,7 +882,7 @@ private struct CalendarWidgetView: View {
         }
     }
 
-    private func dayCell(key: WidgetDateKey, month: WidgetDateKey) -> some View {
+    private func dayCell(key: WidgetDateKey, month: WidgetDateKey) -> AnyView {
         let theme = self.theme
         let day = entry.days[key]
         let status = day?.status
@@ -896,6 +896,40 @@ private struct CalendarWidgetView: View {
         let fill: Color? = isToday
             ? theme.todayFill
             : (status == .rest ? theme.restFill : nil)
+
+        // 上下月的日期也可点击，为控制渲染耗时省掉农历小字，只保留数字与休/班角标。
+        guard inCurrentMonth else {
+            return AnyView(
+                selectable(
+                    Text("\(key.day)")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(numberColor.opacity(fadedOpacity))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 30, alignment: .top)
+                        .padding(.vertical, 1)
+                        .background {
+                            if let fill {
+                                RoundedRectangle(cornerRadius: 6, style: .continuous).fill(fill)
+                            }
+                        }
+                        .overlay(alignment: .topTrailing) {
+                            if let status {
+                                Text(status == .rest ? "休" : "班")
+                                    .font(.system(size: 6, weight: .medium))
+                                    .foregroundStyle(theme.onBadge)
+                                    .padding(.horizontal, 2)
+                                    .padding(.vertical, 1)
+                                    .background(status == .rest ? theme.holiday : theme.workBadge)
+                                    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                                    .opacity(0.5)
+                                    .offset(x: 2, y: -2)
+                            }
+                        }
+                        .contentShape(Rectangle()),
+                    key: key
+                )
+            )
+        }
 
         let cell = VStack(spacing: 1) {
             Text("\(key.day)")
@@ -942,7 +976,7 @@ private struct CalendarWidgetView: View {
         }
         .contentShape(Rectangle())
 
-        return selectable(cell, key: key, enabled: inCurrentMonth)
+        return AnyView(selectable(cell, key: key))
     }
 
     // MARK: - 中号
@@ -1093,7 +1127,7 @@ private struct CalendarWidgetView: View {
             .widgetAccentable(status == .rest && !isToday)
             .contentShape(Rectangle())
 
-        return selectable(cell, key: key, enabled: inCurrentMonth)
+        return selectable(cell, key: key)
     }
 
     // MARK: - 小号
@@ -1280,15 +1314,11 @@ private struct CalendarWidgetView: View {
             .widgetAccentable(status == .rest)
     }
 
-    /// 每个按钮都会显著增加点击后的渲染时间，淡灰色的上下月日期不做成按钮。
-    @ViewBuilder
-    private func selectable<Cell: View>(_ cell: Cell, key: WidgetDateKey, enabled: Bool) -> some View {
-        if enabled {
-            Button(intent: SelectDateIntent(date: key)) { cell }
-                .buttonStyle(.plain)
-        } else {
-            cell
-        }
+    /// 上下月的淡灰色日期同样可点击，点后切到所在月份并选中；
+    /// 否则点击会落到整块组件的 widgetURL 上直接打开网页，容易让人误解。
+    private func selectable<Cell: View>(_ cell: Cell, key: WidgetDateKey) -> some View {
+        Button(intent: SelectDateIntent(date: key)) { cell }
+            .buttonStyle(.plain)
     }
 
     private func almanacLine(tag: String, text: String, color: Color) -> some View {
