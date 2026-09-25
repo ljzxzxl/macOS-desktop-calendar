@@ -329,6 +329,19 @@ struct WeatherSnapshot: Codable, Equatable {
     }
 }
 
+/// 吸收非交互区域的点击。整块组件设了 widgetURL，不被控件覆盖的地方点下去会打开网页，
+/// 星期表头这类纯展示内容套上它即可保持无反应。
+struct NoActionIntent: AppIntent {
+    static let title: LocalizedStringResource = "无操作"
+    static let description = IntentDescription("点击日历的非交互区域时不做任何事")
+    static let openAppWhenRun = false
+    static let isDiscoverable = false
+
+    func perform() async throws -> some IntentResult {
+        .result()
+    }
+}
+
 /// 下一个法定假期；dayIndex 不为 nil 表示今天正处于该假期中的第几天。
 private struct HolidayInfo {
     let name: String
@@ -1394,14 +1407,19 @@ private struct CalendarWidgetView: View {
     }
 
     private func weekdayHeader(fontSize: CGFloat) -> some View {
-        HStack(spacing: 0) {
-            ForEach(Array(weekdayNames.enumerated()), id: \.offset) { index, weekday in
-                Text(weekday)
-                    .font(.system(size: fontSize, weight: .medium))
-                    .foregroundStyle(index >= 5 ? theme.holiday : theme.mutedInk)
-                    .frame(maxWidth: .infinity)
+        Button(intent: NoActionIntent()) {
+            HStack(spacing: 0) {
+                ForEach(Array(weekdayNames.enumerated()), id: \.offset) { index, weekday in
+                    Text(weekday)
+                        .font(.system(size: fontSize, weight: .medium))
+                        .foregroundStyle(index >= 5 ? theme.holiday : theme.mutedInk)
+                        .frame(maxWidth: .infinity)
+                }
             }
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
     }
 
     private var appearanceToggle: some View {
